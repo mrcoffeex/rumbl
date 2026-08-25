@@ -2,14 +2,14 @@ import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } fro
 import { Link, useLocation, useNavigate, useParams } from 'react-router-dom'
 import { QRCodeCanvas } from 'qrcode.react'
 import {
-  ArrowLeft, ArrowRight, Check, CheckCircle2, Clipboard, Download, Grid3X3, List,
+  ArrowLeft, ArrowRight, Check, CheckCircle2, Clipboard, Download, ExternalLink, Grid3X3, List,
   LockKeyhole, Plus, RefreshCw, Search, Shuffle, Trash2, UserRound, UsersRound, XCircle,
 } from 'lucide-react'
-import { api, ApiError, type CreateSessionInput, type PublicSession, type Session } from './api'
+import { api, ApiError, type CreateSessionInput, type PublicResults, type PublicSession, type Registration, type Session } from './api'
 import { useAuth } from './auth'
-import { Brand, ConfirmationModal, EmptyState, ErrorState, LoadingState, PageHeading, StatusBadge } from './components'
+import { Brand, ConfirmationModal, EmptyState, ErrorState, GroupsGrid, LoadingState, PageHeading, StatusBadge } from './components'
 
-function useRemote<T>(load: () => Promise<T>, dependencies: unknown[]) {
+export function useRemote<T>(load: () => Promise<T>, dependencies: unknown[]) {
   const [data, setData] = useState<T | null>(null)
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(true)
@@ -25,16 +25,18 @@ function useRemote<T>(load: () => Promise<T>, dependencies: unknown[]) {
 }
 
 export function LoginPage() {
-  const { login, user } = useAuth()
+  const { login, googleLogin, user } = useAuth()
   const navigate = useNavigate()
   const location = useLocation()
-  const [username, setUsername] = useState('')
+  const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
+  const [rememberMe, setRememberMe] = useState(true)
   const [error, setError] = useState('')
   const [submitting, setSubmitting] = useState(false)
+  const destination = (location.state as { from?: { pathname?: string } } | null)?.from?.pathname || '/sessions'
 
   useEffect(() => {
-    if (user) navigate('/admin', { replace: true })
+    if (user) navigate(user.role === 'admin' ? '/admin' : '/sessions', { replace: true })
   }, [navigate, user])
 
   async function submit(event: FormEvent) {
@@ -42,9 +44,8 @@ export function LoginPage() {
     setSubmitting(true)
     setError('')
     try {
-      await login(username, password)
-      const destination = (location.state as { from?: { pathname?: string } } | null)?.from?.pathname || '/admin'
-      navigate(destination, { replace: true })
+      await login(email, password, rememberMe)
+      navigate(destination.startsWith('/login') ? '/sessions' : destination, { replace: true })
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : 'Unable to sign in.')
     } finally {
@@ -57,38 +58,270 @@ export function LoginPage() {
       <div className="auth-brand"><Brand /></div>
       <section className="auth-card" aria-labelledby="login-title">
         <div className="auth-icon"><LockKeyhole size={22} /></div>
-        <p className="eyebrow">Admin access</p>
+        <p className="eyebrow">Sign in</p>
         <h1 id="login-title">Welcome back</h1>
-        <p className="page-description">Sign in to create sessions and make balanced groups.</p>
+        <p className="page-description">Create groups as a user, or manage the platform as an admin.</p>
         <form onSubmit={submit} className="stack-form">
           {error && <div className="form-error" role="alert">{error}</div>}
-          <label>Username<input autoComplete="username" required value={username} onChange={(e) => setUsername(e.target.value)} placeholder="admin" /></label>
+          <label>Email<input type="email" autoComplete="email" required value={email} onChange={(e) => setEmail(e.target.value)} placeholder="you@school.edu" /></label>
           <label>Password<input type="password" autoComplete="current-password" required value={password} onChange={(e) => setPassword(e.target.value)} placeholder="Your password" /></label>
+          <label className="check-row"><input type="checkbox" checked={rememberMe} onChange={(e) => setRememberMe(e.target.checked)} /> Remember me</label>
           <button className="button primary full" disabled={submitting}>{submitting ? 'Signing in…' : <>Sign in <ArrowRight size={17} /></>}</button>
+        </form>
+        <GoogleSignIn rememberMe={rememberMe} onToken={(token) => googleLogin(token, rememberMe).then(() => navigate(destination, { replace: true })).catch((cause) => setError(cause instanceof Error ? cause.message : 'Google sign-in failed.'))} onError={setError} />
+        <p className="auth-links"><Link to="/forgot-password">Forgot password?</Link><Link to="/register">Create an account</Link></p>
+      </section>
+    </main>
+  )
+}
+
+export function RegisterPage() {
+  const { register, googleLogin, user } = useAuth()
+  const navigate = useNavigate()
+  const [name, setName] = useState('')
+  const [email, setEmail] = useState('')
+  const [password, setPassword] = useState('')
+  const [rememberMe, setRememberMe] = useState(true)
+  const [error, setError] = useState('')
+  const [submitting, setSubmitting] = useState(false)
+
+  useEffect(() => {
+    if (user) navigate('/sessions', { replace: true })
+  }, [navigate, user])
+
+  async function submit(event: FormEvent) {
+    event.preventDefault()
+    setSubmitting(true)
+    setError('')
+    try {
+      await register(name, email, password, rememberMe)
+      navigate('/sessions', { replace: true })
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : 'Unable to create an account.')
+    } finally {
+      setSubmitting(false)
+    }
+  }
+
+  return (
+    <main className="auth-page">
+      <div className="auth-brand"><Brand /></div>
+      <section className="auth-card" aria-labelledby="register-title">
+        <p className="eyebrow">New account</p>
+        <h1 id="register-title">Start grouping</h1>
+        <p className="page-description">Users can create and shuffle groups. Admins get a dashboard and user management.</p>
+        <form onSubmit={submit} className="stack-form">
+          {error && <div className="form-error" role="alert">{error}</div>}
+          <label>Name<input required maxLength={120} value={name} onChange={(e) => setName(e.target.value)} placeholder="Alex Rivera" /></label>
+          <label>Email<input type="email" autoComplete="email" required value={email} onChange={(e) => setEmail(e.target.value)} placeholder="you@school.edu" /></label>
+          <label>Password<input type="password" autoComplete="new-password" required minLength={8} value={password} onChange={(e) => setPassword(e.target.value)} placeholder="At least 8 characters" /></label>
+          <label className="check-row"><input type="checkbox" checked={rememberMe} onChange={(e) => setRememberMe(e.target.checked)} /> Remember me</label>
+          <button className="button primary full" disabled={submitting}>{submitting ? 'Creating…' : <>Create account <ArrowRight size={17} /></>}</button>
+        </form>
+        <GoogleSignIn rememberMe={rememberMe} onToken={(token) => googleLogin(token, rememberMe).then(() => navigate('/sessions', { replace: true })).catch((cause) => setError(cause instanceof Error ? cause.message : 'Google sign-in failed.'))} onError={setError} />
+        <p className="legal-agree">By continuing you agree to the <Link className="text-link" to="/terms">Terms & Conditions</Link> and <Link className="text-link" to="/privacy">Privacy Policy</Link>.</p>
+        <p className="auth-links"><Link to="/login">Already have an account?</Link></p>
+      </section>
+    </main>
+  )
+}
+
+export function ForgotPasswordPage() {
+  const [email, setEmail] = useState('')
+  const [error, setError] = useState('')
+  const [message, setMessage] = useState('')
+  const [submitting, setSubmitting] = useState(false)
+
+  async function submit(event: FormEvent) {
+    event.preventDefault()
+    setSubmitting(true)
+    setError('')
+    setMessage('')
+    try {
+      const result = await api.forgotPassword(email)
+      setMessage(result.resetUrl ? `Reset link: ${result.resetUrl}` : 'A password reset link has been sent.')
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : 'Unable to start a password reset.')
+    } finally {
+      setSubmitting(false)
+    }
+  }
+
+  return (
+    <main className="auth-page">
+      <div className="auth-brand"><Brand /></div>
+      <section className="auth-card">
+        <p className="eyebrow">Account recovery</p>
+        <h1>Forgot password</h1>
+        <p className="page-description">Password reset is only available for email accounts, not Google sign-in.</p>
+        <form onSubmit={submit} className="stack-form">
+          {error && <div className="form-error" role="alert">{error}</div>}
+          {message && <div className="form-success" role="status">{message}</div>}
+          <label>Email<input type="email" required value={email} onChange={(e) => setEmail(e.target.value)} placeholder="you@school.edu" /></label>
+          <button className="button primary full" disabled={submitting}>{submitting ? 'Checking…' : 'Send reset link'}</button>
+        </form>
+        <p className="auth-links"><Link to="/login">Back to sign in</Link></p>
+      </section>
+    </main>
+  )
+}
+
+export function ResetPasswordPage() {
+  const navigate = useNavigate()
+  const [password, setPassword] = useState('')
+  const [error, setError] = useState('')
+  const [submitting, setSubmitting] = useState(false)
+  const token = new URLSearchParams(window.location.search).get('token') || ''
+
+  async function submit(event: FormEvent) {
+    event.preventDefault()
+    setSubmitting(true)
+    setError('')
+    try {
+      await api.resetPassword(token, password)
+      navigate('/login', { replace: true })
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : 'Unable to reset password.')
+    } finally {
+      setSubmitting(false)
+    }
+  }
+
+  return (
+    <main className="auth-page">
+      <div className="auth-brand"><Brand /></div>
+      <section className="auth-card">
+        <p className="eyebrow">Account recovery</p>
+        <h1>Choose a new password</h1>
+        <form onSubmit={submit} className="stack-form">
+          {error && <div className="form-error" role="alert">{error}</div>}
+          {!token && <div className="form-error" role="alert">This reset link is missing a token.</div>}
+          <label>New password<input type="password" autoComplete="new-password" required minLength={8} value={password} onChange={(e) => setPassword(e.target.value)} /></label>
+          <button className="button primary full" disabled={submitting || !token}>{submitting ? 'Saving…' : 'Update password'}</button>
         </form>
       </section>
     </main>
   )
 }
 
+function GoogleSignIn({ onToken }: { rememberMe?: boolean; onToken: (token: string) => void; onError: (message: string) => void }) {
+  const [clientId, setClientId] = useState<string | null>(null)
+  const [configState, setConfigState] = useState<'loading' | 'ready' | 'missing' | 'unreachable'>('loading')
+  const [scriptFailed, setScriptFailed] = useState(false)
+  const buttonRef = useRef<HTMLDivElement>(null)
+  const onTokenRef = useRef(onToken)
+  onTokenRef.current = onToken
+
+  useEffect(() => {
+    void api.authConfig()
+      .then((config) => {
+        if (config.googleClientId) {
+          setClientId(config.googleClientId)
+          setConfigState('ready')
+        } else {
+          setConfigState('missing')
+        }
+      })
+      .catch(() => setConfigState('unreachable'))
+  }, [])
+
+  useEffect(() => {
+    if (!clientId) return
+    const scriptId = 'google-gsi-client'
+    let cancelled = false
+    let script = document.getElementById(scriptId) as HTMLScriptElement | null
+
+    const prepare = () => {
+      if (cancelled || !buttonRef.current || !window.google) return
+      buttonRef.current.replaceChildren()
+      window.google.accounts.id.initialize({
+        client_id: clientId,
+        callback: (response: { credential: string }) => onTokenRef.current(response.credential),
+        ux_mode: 'popup',
+      })
+      const width = Math.max(240, Math.min(buttonRef.current.clientWidth || 320, 400))
+      window.google.accounts.id.renderButton(buttonRef.current, {
+        theme: 'outline',
+        size: 'large',
+        width,
+        text: 'continue_with',
+      })
+    }
+
+    if (!script) {
+      script = document.createElement('script')
+      script.id = scriptId
+      script.src = 'https://accounts.google.com/gsi/client'
+      script.async = true
+      document.head.appendChild(script)
+    }
+
+    if (window.google) prepare()
+    else script.addEventListener('load', prepare)
+
+    const timeout = window.setTimeout(() => {
+      if (!cancelled && !window.google) setScriptFailed(true)
+    }, 8000)
+
+    return () => {
+      cancelled = true
+      window.clearTimeout(timeout)
+      script?.removeEventListener('load', prepare)
+    }
+  }, [clientId])
+
+  return (
+    <div className="google-wrap">
+      <div className="auth-divider">or</div>
+      {configState === 'loading' && <p className="auth-note">Checking Google sign-in…</p>}
+      {configState === 'missing' && (
+        <p className="auth-note">Google sign-in is not configured on the server. Restart npm run dev after saving GOOGLE_CLIENT_ID in server/.env.</p>
+      )}
+      {configState === 'unreachable' && (
+        <p className="auth-note">Cannot reach the API, so Google sign-in is unavailable. Confirm the server is running on port 4000.</p>
+      )}
+      {configState === 'ready' && <div ref={buttonRef} className="google-official" />}
+      {configState === 'ready' && scriptFailed && (
+        <p className="auth-note">Google’s sign-in script did not load. Check that accounts.google.com is reachable.</p>
+      )}
+    </div>
+  )
+}
+
+declare global {
+  interface Window {
+    google?: {
+      accounts: {
+        id: {
+          initialize: (config: { client_id: string; callback: (response: { credential: string }) => void; ux_mode?: string }) => void
+          prompt: (callback?: (notification: { isNotDisplayed: () => boolean; isSkippedMoment: () => boolean }) => void) => void
+          renderButton: (parent: HTMLElement, options: Record<string, unknown>) => void
+        }
+      }
+    }
+  }
+}
+
 export function DashboardPage() {
   const { data: sessions, error, loading, retry } = useRemote(api.sessions, [])
   return (
     <>
-      <PageHeading eyebrow="Admin" title="Your sessions" description="Collect registrations and turn them into balanced groups."
-        action={<Link className="button primary" to="/admin/sessions/new"><Plus size={17} />New session</Link>} />
+      <PageHeading eyebrow="Workspace" title="Your groups" description="Create sessions, collect registrations, and shuffle balanced groups."
+        action={<Link className="button primary" to="/sessions/new"><Plus size={17} />New session</Link>} />
       {loading ? <LoadingState label="Loading sessions…" /> : error ? <ErrorState message={error} retry={retry} /> :
         !sessions?.length ? <EmptyState title="No sessions yet" body="Create a session, share its link, then shuffle everyone into groups."
-          action={<Link className="button primary" to="/admin/sessions/new"><Plus size={17} />Create session</Link>} /> :
+          action={<Link className="button primary" to="/sessions/new"><Plus size={17} />Create session</Link>} /> :
           <div className="session-list">
             {sessions.map((session) => {
               const registered = session.registeredCount
-              const percent = Math.min(100, Math.round((registered / Math.max(session.expectedCount, 1)) * 100))
+              const expected = session.expectedCount
+              const limited = expected != null
+              const percent = limited ? Math.min(100, Math.round((registered / Math.max(expected, 1)) * 100)) : 0
               return (
-                <Link className="session-row" to={`/admin/sessions/${session.id}`} key={session.id}>
+                <Link className="session-row" to={`/sessions/${session.id}`} key={session.id}>
                   <div className="session-main"><div className="session-title-line"><h2>{session.title}</h2><StatusBadge status={session.status} /></div>
                     <p>{session.roles.length} role{session.roles.length === 1 ? '' : 's'} · Created {new Date(session.createdAt).toLocaleDateString()}</p></div>
-                  <div className="session-capacity"><div><span>{registered} registered</span><span>{session.expectedCount} expected</span></div>
+                  <div className="session-capacity"><div><span>{registered} registered</span><span>{limited ? `${session.expectedCount} expected` : 'No limit'}</span></div>
                     <div className="progress"><span style={{ width: `${percent}%` }} /></div></div>
                   <ArrowRight className="row-arrow" size={20} />
                 </Link>
@@ -101,17 +334,104 @@ export function DashboardPage() {
 
 type RoleDraft = { id: number; name: string; slotsPerGroup: number }
 
+const ROLE_PRESETS = [
+  {
+    label: 'Software studio',
+    hint: '1 programmer, 1 UI/UX, 1 researcher',
+    roles: [
+      { name: 'Programmer', slotsPerGroup: 1 },
+      { name: 'UI/UX', slotsPerGroup: 1 },
+      { name: 'Researcher', slotsPerGroup: 1 },
+    ],
+  },
+  {
+    label: 'Product team',
+    hint: '2 builders, 1 designer, 1 researcher',
+    roles: [
+      { name: 'Builder', slotsPerGroup: 2 },
+      { name: 'Designer', slotsPerGroup: 1 },
+      { name: 'Researcher', slotsPerGroup: 1 },
+    ],
+  },
+  {
+    label: 'Discussion',
+    hint: '1 facilitator, 1 scribe, 1 speaker',
+    roles: [
+      { name: 'Facilitator', slotsPerGroup: 1 },
+      { name: 'Scribe', slotsPerGroup: 1 },
+      { name: 'Speaker', slotsPerGroup: 1 },
+    ],
+  },
+  {
+    label: 'Pairs',
+    hint: '2 members per group',
+    roles: [{ name: 'Member', slotsPerGroup: 2 }],
+  },
+] as const
+
+function suggestedGroupSizes(expectedCount: number) {
+  return [2, 3, 4, 5, 6]
+    .filter((size) => size < expectedCount)
+    .map((size) => {
+      const remainder = expectedCount % size
+      return {
+        size,
+        groups: Math.ceil(expectedCount / size),
+        remainder,
+        even: remainder === 0,
+      }
+    })
+    .sort((a, b) => Number(b.even) - Number(a.even) || a.size - b.size)
+}
+
+function fitRolesToGroupSize(roles: RoleDraft[], size: number) {
+  const kept = roles.slice(0, Math.max(1, size))
+  let remaining = size
+  return kept.map((role, index) => {
+    const reservedForOthers = kept.length - 1 - index
+    const maxSlots = Math.max(1, remaining - reservedForOthers)
+    const slotsPerGroup = Math.min(Math.max(1, role.slotsPerGroup), maxSlots)
+    remaining -= slotsPerGroup
+    return { ...role, slotsPerGroup }
+  })
+}
+
 export function NewSessionPage() {
   const navigate = useNavigate()
   const [title, setTitle] = useState('')
   const [expectedCount, setExpectedCount] = useState(20)
-  const [roles, setRoles] = useState<RoleDraft[]>([{ id: 1, name: '', slotsPerGroup: 1 }])
-  const [nextId, setNextId] = useState(2)
+  const [limitParticipants, setLimitParticipants] = useState(true)
+  const [membersPerGroup, setMembersPerGroup] = useState(3)
+  const [roles, setRoles] = useState<RoleDraft[]>([
+    { id: 1, name: 'Programmer', slotsPerGroup: 1 },
+    { id: 2, name: 'UI/UX', slotsPerGroup: 1 },
+    { id: 3, name: 'Researcher', slotsPerGroup: 1 },
+  ])
+  const [nextId, setNextId] = useState(4)
   const [error, setError] = useState('')
   const [submitting, setSubmitting] = useState(false)
+  const assignedSeats = roles.reduce((sum, role) => sum + role.slotsPerGroup, 0)
+  const remainingSeats = membersPerGroup - assignedSeats
+  const fullGroups = Math.floor(expectedCount / Math.max(membersPerGroup, 1))
+  const leftover = expectedCount % Math.max(membersPerGroup, 1)
+  const sizeOptions = limitParticipants ? suggestedGroupSizes(expectedCount) : [2, 3, 4, 5, 6].map((size) => ({ size, groups: 0, remainder: 0, even: true }))
+
+  function applyGroupSize(size: number) {
+    const nextSize = Math.max(1, Math.min(50, size))
+    setMembersPerGroup(nextSize)
+    setRoles((current) => fitRolesToGroupSize(current, nextSize))
+  }
+
+  function applyPreset(preset: (typeof ROLE_PRESETS)[number]) {
+    const size = preset.roles.reduce((sum, role) => sum + role.slotsPerGroup, 0)
+    setMembersPerGroup(size)
+    setRoles(preset.roles.map((role, index) => ({ id: nextId + index, ...role })))
+    setNextId((id) => id + preset.roles.length)
+  }
 
   function addRole() {
-    setRoles((current) => [...current, { id: nextId, name: '', slotsPerGroup: 1 }])
+    if (remainingSeats <= 0) return
+    setRoles((current) => [...current, { id: nextId, name: '', slotsPerGroup: remainingSeats }])
     setNextId((id) => id + 1)
   }
 
@@ -122,16 +442,25 @@ export function NewSessionPage() {
   async function submit(event: FormEvent) {
     event.preventDefault()
     if (roles.some((role) => !role.name.trim())) return setError('Give every role a name.')
+    if (new Set(roles.map((role) => role.name.trim().toLocaleLowerCase())).size !== roles.length) {
+      return setError('Role names must be unique.')
+    }
+    if (assignedSeats !== membersPerGroup) {
+      return setError(`Role seats must add up to ${membersPerGroup} members per group.`)
+    }
+    if (limitParticipants && expectedCount < membersPerGroup) {
+      return setError('Participant limit must cover at least one full group.')
+    }
     setSubmitting(true)
     setError('')
     const input: CreateSessionInput = {
       title: title.trim(),
-      expectedCount,
+      expectedCount: limitParticipants ? expectedCount : null,
       roles: roles.map(({ name, slotsPerGroup }) => ({ name: name.trim(), slotsPerGroup })),
     }
     try {
       const session = await api.createSession(input)
-      navigate(`/admin/sessions/${session.id}`)
+      navigate(`/sessions/${session.id}`)
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : 'Unable to create session.')
     } finally {
@@ -141,28 +470,65 @@ export function NewSessionPage() {
 
   return (
     <div className="narrow-page">
-      <Link className="back-link" to="/admin"><ArrowLeft size={16} />All sessions</Link>
-      <PageHeading eyebrow="New session" title="Design your groups" description="Define who you expect. Rumbl will spread each role evenly when you shuffle." />
+      <Link className="back-link" to="/sessions"><ArrowLeft size={16} />All sessions</Link>
+      <PageHeading eyebrow="New session" title="Design your groups" description="Choose a group size, add the roles that belong in each group, then pick how many seats each role gets." />
       <form className="card form-card" onSubmit={submit}>
         {error && <div className="form-error" role="alert">{error}</div>}
         <div className="form-grid">
           <label className="wide">Session title<input required maxLength={120} value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Summer volunteer kickoff" /></label>
-          <label>Expected participants<input required type="number" min="1" max="1000" value={expectedCount} onChange={(e) => setExpectedCount(Number(e.target.value))} /></label>
+        </div>
+        <div className="limit-row">
+          <div className="section-heading"><div><h2>Participant limit</h2><p>Cap how many people can join, or leave enrollment open.</p></div></div>
+          <div className="display-toggle limit-toggle" role="group" aria-label="Participant limit">
+            <button type="button" aria-pressed={limitParticipants} onClick={() => setLimitParticipants(true)}>Limit</button>
+            <button type="button" aria-pressed={!limitParticipants} onClick={() => setLimitParticipants(false)}>No limit</button>
+          </div>
+          {limitParticipants && <label>Maximum participants<input required type="number" min="1" max="1000" value={expectedCount} onChange={(e) => setExpectedCount(Number(e.target.value) || 1)} /></label>}
         </div>
         <div className="section-divider" />
-        <div className="section-heading"><div><h2>Roles</h2><p>Set the ideal number of each role per group.</p></div>
-          <button type="button" className="button secondary small" onClick={addRole}><Plus size={16} />Add role</button></div>
+        <div className="section-heading"><div><h2>Suggested setups</h2><p>Start from a common classroom pattern, then adjust.</p></div></div>
+        <div className="option-chips">
+          {ROLE_PRESETS.map((preset) => {
+            const selected = preset.roles.length === roles.length
+              && preset.roles.every((role, index) => roles[index]?.name === role.name && roles[index]?.slotsPerGroup === role.slotsPerGroup)
+            return (
+            <button type="button" className={`suggestion-chip ${selected ? 'selected' : ''}`} key={preset.label} onClick={() => applyPreset(preset)}>
+              <strong>{preset.label}</strong>
+              <span>{preset.hint}</span>
+            </button>
+            )
+          })}
+        </div>
+        <div className="section-divider" />
+        <div className="section-heading"><div><h2>Members per group</h2><p>This is the maximum size of every shuffled group.</p></div></div>
+        <label className="group-size-field">Group size<input required type="number" min={Math.max(1, roles.length)} max="50" value={membersPerGroup} onChange={(e) => applyGroupSize(Number(e.target.value) || 1)} /></label>
+        {!!sizeOptions.length && <div className="option-chips compact">
+          {sizeOptions.map((option) => (
+            <button type="button" className={`suggestion-chip ${option.size === membersPerGroup ? 'selected' : ''}`} key={option.size} onClick={() => applyGroupSize(option.size)}>
+              <strong>{option.size} per group</strong>
+              <span>{limitParticipants ? (option.even ? `${option.groups} even groups` : `${Math.floor(expectedCount / option.size)} full · ${option.remainder} leftover`) : 'Open enrollment'}</span>
+            </button>
+          ))}
+        </div>}
+        <p className="plan-preview" aria-live="polite">
+          {limitParticipants
+            ? `${expectedCount} participants → ${fullGroups} group${fullGroups === 1 ? '' : 's'} of ${membersPerGroup}${leftover ? `, plus one partial group of ${leftover}` : ''}.`
+            : `No participant cap. People will be shuffled into groups of ${membersPerGroup}.`}
+        </p>
+        <div className="section-divider" />
+        <div className="section-heading"><div><h2>Roles in each group</h2><p>Assign how many members of each role sit in a group. Seats used: {assignedSeats} of {membersPerGroup}{remainingSeats > 0 ? ` · ${remainingSeats} open` : remainingSeats < 0 ? ` · ${Math.abs(remainingSeats)} over the group size` : ''}.</p></div>
+          <button type="button" className="button secondary small" disabled={remainingSeats <= 0} onClick={addRole}><Plus size={16} />Add role</button></div>
         <div className="roles-editor">
           {roles.map((role, index) => (
             <div className="role-row" key={role.id}>
               <span className="row-number">{index + 1}</span>
               <label>Role name<input required value={role.name} onChange={(e) => updateRole(role.id, { name: e.target.value })} placeholder="e.g. Designer" /></label>
-              <label>Slots per group<input required type="number" min="1" max="50" value={role.slotsPerGroup} onChange={(e) => updateRole(role.id, { slotsPerGroup: Number(e.target.value) })} /></label>
+              <label>Members per role<input required type="number" min="1" max={membersPerGroup} value={role.slotsPerGroup} onChange={(e) => updateRole(role.id, { slotsPerGroup: Math.max(1, Number(e.target.value) || 1) })} /></label>
               <button type="button" className="icon-button danger" disabled={roles.length === 1} onClick={() => setRoles((current) => current.filter((item) => item.id !== role.id))} aria-label={`Remove role ${index + 1}`}><Trash2 size={18} /></button>
             </div>
           ))}
         </div>
-        <div className="form-actions"><Link className="button secondary" to="/admin">Cancel</Link>
+        <div className="form-actions"><Link className="button secondary" to="/sessions">Cancel</Link>
           <button className="button primary" disabled={submitting}>{submitting ? 'Creating…' : <>Create session <ArrowRight size={17} /></>}</button></div>
       </form>
     </div>
@@ -171,14 +537,16 @@ export function NewSessionPage() {
 
 export function SessionDetailPage() {
   const { id = '' } = useParams()
+  const { user, loading: authLoading } = useAuth()
   const { data: session, setData: setSession, error, loading, retry } = useRemote(() => api.session(id), [id])
   const [action, setAction] = useState('')
   const [actionError, setActionError] = useState('')
-  const [copied, setCopied] = useState(false)
+  const [copied, setCopied] = useState<'join' | 'results' | ''>('')
   const [participantQuery, setParticipantQuery] = useState('')
   const [participantView, setParticipantView] = useState<'list' | 'cards'>('list')
   const [visibleParticipants, setVisibleParticipants] = useState(30)
   const [shuffleConfirmation, setShuffleConfirmation] = useState(false)
+  const [participantToRemove, setParticipantToRemove] = useState<Registration | null>(null)
   const qrRef = useRef<HTMLDivElement>(null)
   const actionInProgress = useRef(false)
   const refreshGeneration = useRef(0)
@@ -212,9 +580,11 @@ export function SessionDetailPage() {
   }, [id, setSession])
 
   const joinUrl = session ? `${window.location.origin}/join/${session.token}` : ''
+  const resultsUrl = session ? `${window.location.origin}/results/${session.token}` : ''
   const registered = session?.registrations?.length || 0
-  const capacity = session?.roles?.reduce((sum, role) => sum + (role.capacity || 0), 0) || session?.expectedCount || 0
-  const percent = Math.min(100, Math.round((registered / Math.max(capacity, 1)) * 100))
+  const expected = session?.expectedCount
+  const limited = expected != null
+  const percent = limited ? Math.min(100, Math.round((registered / Math.max(expected, 1)) * 100)) : 0
   const filteredRegistrations = useMemo(() => {
     const query = participantQuery.trim().toLocaleLowerCase()
     if (!query) return session?.registrations || []
@@ -241,10 +611,10 @@ export function SessionDetailPage() {
     }
   }
 
-  async function copyLink() {
-    await navigator.clipboard.writeText(joinUrl)
-    setCopied(true)
-    window.setTimeout(() => setCopied(false), 1800)
+  async function copyLink(url: string, kind: 'join' | 'results') {
+    await navigator.clipboard.writeText(url)
+    setCopied(kind)
+    window.setTimeout(() => setCopied(''), 1800)
   }
 
   function downloadQr() {
@@ -265,8 +635,17 @@ export function SessionDetailPage() {
     void runAction('shuffle', () => api.shuffle(id))
   }
 
-  if (loading) return <LoadingState label="Loading session…" />
+  function executeRemove() {
+    if (!participantToRemove) return
+    const studentId = participantToRemove.id
+    setParticipantToRemove(null)
+    void runAction('remove', () => api.removeParticipant(id, studentId))
+  }
+
+  if (loading || authLoading) return <LoadingState label="Loading session…" />
   if (error || !session) return <ErrorState message={error || 'Session not found.'} retry={retry} />
+
+  const canManage = user?.id === session.ownerId
 
   return (
     <>
@@ -277,28 +656,35 @@ export function SessionDetailPage() {
         onCancel={() => setShuffleConfirmation(false)}
         onConfirm={executeShuffle}
       />}
-      <Link className="back-link" to="/admin"><ArrowLeft size={16} />All sessions</Link>
+      {participantToRemove && <ConfirmationModal
+        title={`Remove ${participantToRemove.name}?`}
+        message={session.groups.length ? `${participantToRemove.name} will be removed from this session and any assigned group. You may need to reshuffle afterward.` : `${participantToRemove.name} will be removed from this session. They can join again later if enrollment is open.`}
+        confirmLabel={action === 'remove' ? 'Removing…' : 'Remove'}
+        onCancel={() => setParticipantToRemove(null)}
+        onConfirm={executeRemove}
+      />}
+      <Link className="back-link" to="/sessions"><ArrowLeft size={16} />All sessions</Link>
       <PageHeading eyebrow="Session" title={session.title} description={`Created ${new Date(session.createdAt).toLocaleDateString()}`}
         action={<div className="heading-buttons"><StatusBadge status={session.status} />
-          {session.status === 'open' ? <button className="button secondary" disabled={!!action} onClick={() => void runAction('close', () => api.setSessionStatus(id, 'closed'))}><XCircle size={17} />{action === 'close' ? 'Closing…' : 'Close enrollment'}</button> :
-            <button className="button secondary" disabled={!!action} onClick={() => void runAction('open', () => api.setSessionStatus(id, 'open'))}><CheckCircle2 size={17} />{action === 'open' ? 'Opening…' : 'Open enrollment'}</button>}
-          <button className="button primary" disabled={!registered || !!action || !['closed', 'grouped'].includes(session.status)} title={session.status === 'open' ? 'Close enrollment before shuffling' : !registered ? 'At least one participant is required' : undefined} onClick={confirmShuffle}>
+          {canManage && (session.status === 'open' ? <button className="button secondary" disabled={!!action} onClick={() => void runAction('close', () => api.setSessionStatus(id, 'closed'))}><XCircle size={17} />{action === 'close' ? 'Closing…' : 'Close enrollment'}</button> :
+            <button className="button secondary" disabled={!!action} onClick={() => void runAction('open', () => api.setSessionStatus(id, 'open'))}><CheckCircle2 size={17} />{action === 'open' ? 'Opening…' : 'Open enrollment'}</button>)}
+          {canManage && <button className="button primary" disabled={!registered || !!action || !['closed', 'grouped'].includes(session.status)} title={session.status === 'open' ? 'Close enrollment before shuffling' : !registered ? 'At least one participant is required' : undefined} onClick={confirmShuffle}>
             {action === 'shuffle' ? <RefreshCw className="spin" size={17} /> : <Shuffle size={17} />}{action === 'shuffle' ? 'Shuffling…' : session.groups?.length ? 'Reshuffle' : 'Shuffle groups'}
-          </button>
+          </button>}
         </div>} />
       {actionError && <div className="form-error" role="alert">{actionError}</div>}
       <div className="detail-grid">
         <section className="card share-card">
           <div><p className="eyebrow">Enrollment link</p><h2>Invite participants</h2><p>Share this link or QR code. Participants can join from any phone.</p>
-            <div className="copy-field"><span>{joinUrl}</span><button onClick={() => void copyLink()} aria-label="Copy enrollment link">{copied ? <Check size={17} /> : <Clipboard size={17} />}{copied ? 'Copied' : 'Copy'}</button></div>
+            <div className="copy-field"><span>{joinUrl}</span><button onClick={() => void copyLink(joinUrl, 'join')} aria-label="Copy enrollment link">{copied === 'join' ? <Check size={17} /> : <Clipboard size={17} />}{copied === 'join' ? 'Copied' : 'Copy'}</button></div>
           </div>
           <div className="qr-wrap" ref={qrRef}><QRCodeCanvas value={joinUrl} size={116} bgColor="#ffffff" fgColor="#26251e" marginSize={1} />
             <button className="text-button" onClick={downloadQr}><Download size={15} />Download QR</button></div>
         </section>
         <section className="card capacity-card" aria-live="polite">
-          <div className="section-heading"><div><p className="eyebrow">Capacity</p><h2>{registered} of {capacity}</h2></div><span className="large-percent">{percent}%</span></div>
+          <div className="section-heading"><div><p className="eyebrow">{limited ? 'Capacity' : 'Registered'}</p><h2>{limited ? `${registered} of ${expected}` : `${registered} joined`}</h2></div><span className="large-percent">{limited ? `${percent}%` : 'No limit'}</span></div>
           <div className="progress large"><span style={{ width: `${percent}%` }} /></div>
-          <div className="role-stats">{session.roles.map((role) => <div key={role.id}><span>{role.name}</span><strong>{role.enrolled || 0}/{role.capacity || '—'}</strong></div>)}</div>
+          <div className="role-stats">{session.roles.map((role) => <div key={role.id}><span>{role.name}</span><strong>{role.capacity == null ? `${role.enrolled || 0}` : `${role.enrolled || 0}/${role.capacity}`}</strong></div>)}</div>
         </section>
       </div>
       <section className="section-block" aria-live="polite">
@@ -318,20 +704,27 @@ export function SessionDetailPage() {
               <div className={participantView === 'cards' ? 'participant-grid' : 'card roster'}>{displayedRegistrations.map((person) => {
                 const roleName = person.roleName || session.roles.find((role) => role.id === person.roleId)?.name || 'Unassigned'
                 const time = new Date(person.createdAt).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })
+                const removeButton = canManage ? (
+                  <button type="button" className="icon-button danger" disabled={!!action} onClick={() => setParticipantToRemove(person)} aria-label={`Remove ${person.name}`}>
+                    <Trash2 size={16} />
+                  </button>
+                ) : null
                 return participantView === 'cards'
-                  ? <article className="card participant-card" key={person.id}><div className="avatar">{person.name.slice(0, 1).toUpperCase()}</div><div><strong>{person.name}</strong><span>{roleName}</span></div><time>{time}</time></article>
-                  : <div className="roster-row" key={person.id}><div className="avatar">{person.name.slice(0, 1).toUpperCase()}</div><div><strong>{person.name}</strong><span>{roleName}</span></div><time>{time}</time></div>
+                  ? <article className="card participant-card" key={person.id}><div className="avatar">{person.name.slice(0, 1).toUpperCase()}</div><div><strong>{person.name}</strong><span>{roleName}</span></div>{removeButton}<time>{time}</time></article>
+                  : <div className="roster-row" key={person.id}><div className="avatar">{person.name.slice(0, 1).toUpperCase()}</div><div><strong>{person.name}</strong><span>{roleName}</span></div><time>{time}</time>{removeButton}</div>
               })}</div>
               {displayedRegistrations.length < filteredRegistrations.length && <div className="show-more-wrap"><button className="button secondary" onClick={() => setVisibleParticipants((count) => count + 30)}>Show more ({filteredRegistrations.length - displayedRegistrations.length} remaining)</button></div>}
             </>}
       </section>
       <section className="section-block">
         <div className="section-heading groups-heading"><div><p className="eyebrow">Group results</p><h2>{session.groups?.length ? `${session.groups.length} groups` : 'Ready to shuffle?'}</h2>
-          <p>{session.groups?.length ? 'Use the shuffle button above whenever you need a fresh mix.' : 'Rumbl distributes roles as evenly as possible.'}</p></div></div>
-        {!!session.groups?.length && <div className="groups-grid">{session.groups.map((group, index) =>
-          <article className="card group-card" key={group.id}><div className="group-title"><span>{String(index + 1).padStart(2, '0')}</span><h3>{group.name || `Group ${index + 1}`}</h3><strong>{group.members.length}</strong></div>
-            <div className="group-members">{group.members.map((member) => <div key={member.id}><div className="avatar small">{member.name.slice(0, 1).toUpperCase()}</div><span>{member.name}</span><em>{member.roleName}</em></div>)}</div>
-          </article>)}</div>}
+          <p>{session.groups?.length ? 'Share the public link so anyone can see these groups.' : 'Rumbl distributes roles as evenly as possible.'}</p></div>
+          {!!session.groups?.length && <div className="results-share">
+            <div className="copy-field"><span>{resultsUrl}</span>
+              <button onClick={() => void copyLink(resultsUrl, 'results')} aria-label="Copy public results link">{copied === 'results' ? <Check size={17} /> : <Clipboard size={17} />}{copied === 'results' ? 'Copied' : 'Copy'}</button></div>
+            <a className="button secondary small" href={resultsUrl} target="_blank" rel="noreferrer"><ExternalLink size={15} />Preview</a>
+          </div>}</div>
+        {!!session.groups?.length && <GroupsGrid groups={session.groups} />}
       </section>
     </>
   )
@@ -348,7 +741,7 @@ export function JoinPage() {
   const [submitError, setSubmitError] = useState('')
   const [submitting, setSubmitting] = useState(false)
   const [cooldown, setCooldown] = useState(0)
-  const availableRoles = useMemo(() => session?.roles.filter((role) => role.enrolled < role.capacity) || [], [session])
+  const availableRoles = useMemo(() => session?.roles.filter((role) => role.capacity == null || role.enrolled < role.capacity) || [], [session])
 
   useEffect(() => {
     let active = true
@@ -399,11 +792,13 @@ export function JoinPage() {
   if (view === 'success') return <main className="join-page"><Brand /><section className="join-card success-card"><div className="success-mark"><Check size={30} /></div><p className="eyebrow">You’re in</p><h1>Thanks, {name}.</h1><p>You’ve registered for <strong>{session.title}</strong>. Your organizer will share your group soon.</p></section></main>
 
   const isClosed = session.status !== 'open'
-  const isFull = session.enrolledCount >= session.expectedCount || !availableRoles.length
+  const isFull = (session.expectedCount != null && session.enrolledCount >= session.expectedCount) || !availableRoles.length
+  const isGrouped = session.status === 'grouped'
   if (isClosed || isFull) return <main className="join-page"><Brand /><section className="join-card message-card">
-    <div className="auth-icon">{isFull ? <UsersRound size={23} /> : <LockKeyhole size={23} />}</div>
-    <p className="eyebrow">{isFull ? 'Session full' : 'Enrollment closed'}</p><h1>{session.title}</h1>
-    <p>{isFull ? 'All available spots have been filled. Check with your organizer in case more are added.' : 'This session is not accepting registrations right now.'}</p>
+    <div className="auth-icon">{isFull || isGrouped ? <UsersRound size={23} /> : <LockKeyhole size={23} />}</div>
+    <p className="eyebrow">{isGrouped ? 'Groups are ready' : isFull ? 'Session full' : 'Enrollment closed'}</p><h1>{session.title}</h1>
+    <p>{isGrouped ? 'Enrollment is closed and groups have been assigned.' : isFull ? 'All available spots have been filled. Check with your organizer in case more are added.' : 'This session is not accepting registrations right now.'}</p>
+    {isGrouped && <Link className="button primary" to={`/results/${token}`}>View group results <ArrowRight size={17} /></Link>}
   </section></main>
 
   return (
@@ -412,16 +807,16 @@ export function JoinPage() {
       <section className="join-card">
         <p className="eyebrow">You’re invited</p><h1>{session.title}</h1>
         <p className="page-description">Tell us who you are and choose the role that fits you best.</p>
-        <div className="join-count"><UserRound size={17} /><strong>{session.enrolledCount}</strong> joined · {session.expectedCount - session.enrolledCount} spots left</div>
+        <div className="join-count"><UserRound size={17} /><strong>{session.enrolledCount}</strong> joined{session.expectedCount != null ? ` · ${Math.max(0, session.expectedCount - session.enrolledCount)} spots left` : ' · no limit'}</div>
         <form className="stack-form" onSubmit={submit}>
           {submitError && <div className="form-error" role="alert">{submitError}</div>}
           <label>Your name<input autoFocus required maxLength={100} value={name} onChange={(e) => setName(e.target.value)} placeholder="Enter your full name" /></label>
           <fieldset><legend>Choose your role</legend><div className="role-options">
             {session.roles.map((role) => {
-              const full = role.enrolled >= role.capacity
+              const full = role.capacity != null && role.enrolled >= role.capacity
               return <label className={`role-option ${full ? 'disabled' : ''}`} key={role.id}>
                 <input type="radio" name="role" value={role.id} required disabled={full} checked={roleId === role.id} onChange={() => setRoleId(role.id)} />
-                <span className="radio-mark" /><span><strong>{role.name}</strong><small>{full ? 'Full' : `${role.capacity - role.enrolled} of ${role.capacity} available`}</small></span>
+                <span className="radio-mark" /><span><strong>{role.name}</strong><small>{full ? 'Full' : role.capacity == null ? 'Open' : `${role.capacity - role.enrolled} of ${role.capacity} available`}</small></span>
               </label>
             })}
           </div></fieldset>
@@ -429,7 +824,65 @@ export function JoinPage() {
             {submitting ? 'Joining…' : cooldown > 0 ? `Try again in ${Math.floor(cooldown / 60)}:${String(cooldown % 60).padStart(2, '0')}` : <>Join session <ArrowRight size={17} /></>}
           </button>
         </form>
+        <p className="legal-agree">By joining you agree to the <Link className="text-link" to="/privacy">Privacy Policy</Link>.</p>
       </section>
+    </main>
+  )
+}
+
+export function ResultsPage() {
+  const { token = '' } = useParams()
+  const { data, setData, error, loading, retry } = useRemote<PublicResults>(() => api.publicResults(token), [token])
+
+  useEffect(() => {
+    let active = true
+    let refreshing = false
+    const refresh = async () => {
+      if (refreshing || document.visibilityState === 'hidden') return
+      refreshing = true
+      try {
+        const latest = await api.publicResults(token)
+        if (active) setData(latest)
+      } catch {
+        // Keep the last successful snapshot during transient refresh failures.
+      } finally {
+        refreshing = false
+      }
+    }
+    const interval = window.setInterval(() => void refresh(), 2000)
+    return () => {
+      active = false
+      window.clearInterval(interval)
+    }
+  }, [token, setData])
+
+  if (loading) return <main className="results-page"><Brand /><LoadingState label="Loading group results…" /></main>
+  if (error || !data) return <main className="results-page"><Brand /><ErrorState message={error || 'These results are not available.'} retry={retry} /></main>
+
+  const grouped = data.status === 'grouped' && data.groups.length > 0
+  if (!grouped) {
+    return (
+      <main className="results-page">
+        <Brand />
+        <section className="join-card message-card">
+          <div className="auth-icon"><UsersRound size={23} /></div>
+          <p className="eyebrow">Waiting on groups</p>
+          <h1>{data.title}</h1>
+          <p>Groups haven’t been shuffled yet. This page updates automatically once your organizer is ready.</p>
+        </section>
+      </main>
+    )
+  }
+
+  return (
+    <main className="results-page">
+      <Brand />
+      <div className="results-shell">
+        <p className="eyebrow">Group results</p>
+        <h1>{data.title}</h1>
+        <p className="page-description">{data.groups.length} group{data.groups.length === 1 ? '' : 's'} assigned for this session.</p>
+        <GroupsGrid groups={data.groups} />
+      </div>
     </main>
   )
 }

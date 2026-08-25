@@ -1,6 +1,7 @@
 import type { NextFunction, Request, Response } from "express";
 import { Prisma } from "@prisma/client";
 import { ZodError } from "zod";
+import { writeLog } from "../lib/logging";
 
 export class HttpError extends Error {
   constructor(
@@ -36,5 +37,10 @@ export function errorHandler(
   }
 
   console.error(error);
+  void writeLog({
+    level: "error",
+    category: "system",
+    message: error instanceof Error ? error.message.slice(0, 500) : "Internal server error",
+  });
   res.status(500).json({ error: "Internal server error" });
 }

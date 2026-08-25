@@ -103,14 +103,23 @@ publicRouter.post("/sessions/:token/enroll", enrollLimiter, async (req, res) => 
         });
         if (duplicate) throw new HttpError(409, "That name is already registered");
 
-        const capacity = calculateCapacity(
-          session.expectedStudentCount,
-          session.roles,
-        ).roles.find((item) => item.id === role.id)!.capacity;
-        const registered = await tx.student.count({
-          where: { sessionId: session.id, roleId: role.id },
-        });
-        if (registered >= capacity) throw new HttpError(409, "That role is full");
+        if (session.expectedStudentCount != null) {
+          const totalRegistered = await tx.student.count({ where: { sessionId: session.id } });
+          if (totalRegistered >= session.expectedStudentCount) {
+            throw new HttpError(409, "This session is full");
+          }
+
+          const capacity = calculateCapacity(
+            session.expectedStudentCount,
+            session.roles,
+          ).roles.find((item) => item.id === role.id)!.capacity;
+          const registered = await tx.student.count({
+            where: { sessionId: session.id, roleId: role.id },
+          });
+          if (capacity != null && registered >= capacity) {
+            throw new HttpError(409, "That role is full");
+          }
+        }
 
         return tx.student.create({
           data: { sessionId: session.id, roleId: role.id, name: input.name },
@@ -128,29 +137,38 @@ publicRouter.get("/sessions/:token/results", async (req, res) => {
   const token = tokenParam.parse(req.params.token);
   const session = await prisma.session.findUnique({
     where: { publicToken: token },
-    select: { id: true, status: true },
+    select: { id: true, title: true, status: true },
   });
   if (!session) throw new HttpError(404, "Session not found");
-  if (session.status !== SessionStatus.GROUPED) {
-    throw new HttpError(409, "Results are not available");
-  }
 
-  const groups = await prisma.generatedGroup.findMany({
-    where: { sessionId: session.id },
-    orderBy: { position: "asc" },
-    select: {
-      name: true,
-      position: true,
-      members: {
-        orderBy: { id: "asc" },
-        select: {
-          student: { select: { id: true, name: true } },
-          role: { select: { id: true, name: true } },
-        },
-      },
+  const groups =
+    session.status === SessionStatus.GROUPED
+      ? await prisma.generatedGroup.findMany({
+          where: { sessionId: session.id },
+          orderBy: { position: "asc" },
+          select: {
+            id: true,
+            name: true,
+            position: true,
+            members: {
+              orderBy: { id: "asc" },
+              select: {
+                student: { select: { id: true, name: true } },
+                role: { select: { id: true, name: true } },
+              },
+            },
+          },
+        })
+      : [];
+
+  res.json({
+    session: {
+      id: session.id,
+      title: session.title,
+      status: session.status,
     },
+    groups,
   });
-  res.json({ groups });
 });
 
 async function withSerializableRetry<T>(operation: () => Promise<T>): Promise<T> {

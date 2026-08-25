@@ -10,12 +10,12 @@ export type GroupableStudent = {
   roleId: number;
 };
 
-export type RoleCapacity = RoleConfig & { capacity: number };
+export type RoleCapacity = RoleConfig & { capacity: number | null };
 
 export type CapacityPlan = {
   baseGroupCount: number;
   totalSlotsPerGroup: number;
-  totalCapacity: number;
+  totalCapacity: number | null;
   roles: RoleCapacity[];
 };
 
@@ -26,12 +26,9 @@ export type GroupResult = {
 };
 
 export function calculateCapacity(
-  expectedStudentCount: number,
+  expectedStudentCount: number | null,
   roles: RoleConfig[],
 ): CapacityPlan {
-  if (!Number.isInteger(expectedStudentCount) || expectedStudentCount < 1) {
-    throw new Error("Expected student count must be a positive integer");
-  }
   if (
     roles.length === 0 ||
     roles.some((role) => !Number.isInteger(role.slotsPerGroup) || role.slotsPerGroup < 1)
@@ -40,6 +37,17 @@ export function calculateCapacity(
   }
 
   const totalSlotsPerGroup = roles.reduce((sum, role) => sum + role.slotsPerGroup, 0);
+  if (expectedStudentCount == null) {
+    return {
+      baseGroupCount: 0,
+      totalSlotsPerGroup,
+      totalCapacity: null,
+      roles: roles.map((role) => ({ ...role, capacity: null })),
+    };
+  }
+  if (!Number.isInteger(expectedStudentCount) || expectedStudentCount < 1) {
+    throw new Error("Expected student count must be a positive integer");
+  }
   const baseGroupCount = Math.floor(expectedStudentCount / totalSlotsPerGroup);
   const capacities = new Map(
     roles.map((role) => [role.id, baseGroupCount * role.slotsPerGroup]),

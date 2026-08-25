@@ -7,19 +7,20 @@ const prisma = new PrismaClient();
 async function main() {
   const username = process.env.ADMIN_USERNAME;
   const password = process.env.ADMIN_PASSWORD;
+  const email = (process.env.ADMIN_EMAIL || (username?.includes("@") ? username : username ? `${username}@rumbl.local` : "")).toLocaleLowerCase();
 
-  if (!username || !password) {
-    throw new Error("ADMIN_USERNAME and ADMIN_PASSWORD are required to seed the admin");
+  if (!email || !password) {
+    throw new Error("ADMIN_EMAIL or ADMIN_USERNAME, and ADMIN_PASSWORD are required to seed the admin");
   }
 
   const passwordHash = await bcrypt.hash(password, 12);
-  await prisma.admin.upsert({
-    where: { username },
-    update: { passwordHash },
-    create: { username, passwordHash },
+  await prisma.user.upsert({
+    where: { email },
+    update: { passwordHash, role: "ADMIN", name: username || "Admin" },
+    create: { email, name: username || "Admin", passwordHash, role: "ADMIN" },
   });
 
-  console.log(`Seeded admin "${username}"`);
+  console.log(`Seeded admin "${email}"`);
 }
 
 main()

@@ -4,7 +4,7 @@ export interface Role {
   id: string
   name: string
   slotsPerGroup: number
-  capacity: number
+  capacity: number | null
   enrolled: number
 }
 
@@ -30,8 +30,9 @@ export interface Group {
 
 export interface Session {
   id: string
+  ownerId: string
   title: string
-  expectedCount: number
+  expectedCount: number | null
   registeredCount: number
   status: SessionStatus
   token: string
@@ -43,21 +44,68 @@ export interface Session {
 
 export interface User {
   id: string
-  username: string
+  email: string
+  name: string
+  role: 'user' | 'admin'
 }
 
 export interface PublicSession {
   id: string
   title: string
   status: SessionStatus
-  expectedCount: number
+  expectedCount: number | null
   enrolledCount: number
   roles: Role[]
 }
 
+export interface PublicResults {
+  title: string
+  status: SessionStatus
+  groups: Group[]
+}
+
+export interface AdminOverview {
+  users: number
+  admins: number
+  sessions: number
+  students: number
+  requests24h: number
+  errors24h: number
+}
+
+export interface AdminCharts {
+  trafficByDay: Array<{ date: string; requests: number; errors: number }>
+  signupsByDay: Array<{ date: string; users: number }>
+  hourlyTraffic: Array<{ hour: string; requests: number }>
+  sessionsByStatus: Array<{ status: string; count: number }>
+  requestsByStatus: Array<{ bucket: string; count: number }>
+}
+
+export interface AdminUser {
+  id: string
+  email: string
+  name: string
+  role: 'user' | 'admin'
+  status: 'active' | 'disabled'
+  google: boolean
+  hasPassword: boolean
+  sessionCount: number
+  createdAt: string
+}
+
+export interface AdminSession {
+  id: string
+  title: string
+  status: SessionStatus
+  createdAt: string
+  owner: { id: string; email: string; name: string }
+  registeredCount: number
+  groupCount: number
+}
+
 export interface CreateSessionInput {
   title: string
-  expectedCount: number
+  expectedCount: number | null
   roles: Array<{ name: string; slotsPerGroup: number }>
 }
 
@@ -77,7 +125,7 @@ type RawRole = {
   id: number
   name: string
   slotsPerGroup: number
-  capacity?: number
+  capacity?: number | null
   registeredCount?: number
   _count?: { students?: number }
 }
@@ -102,8 +150,9 @@ type RawGroup = {
 
 type RawSession = {
   id: number
+  ownerId: number
   title: string
-  expectedStudentCount: number
+  expectedStudentCount: number | null
   status: string
   publicToken: string
   createdAt: string
@@ -131,7 +180,7 @@ function normalizeGroups(groups: RawGroup[]): Group[] {
 
 function normalizeSession(raw: RawSession, groups: RawGroup[] = []): Session {
   const capacityByRole = new Map(
-    (raw.capacity?.roles || []).map((role) => [role.id, role.capacity || 0]),
+    (raw.capacity?.roles || []).map((role) => [role.id, role.capacity ?? null]),
   )
   const registrations = (raw.students || []).map((student) => ({
     id: String(student.id),
@@ -143,6 +192,7 @@ function normalizeSession(raw: RawSession, groups: RawGroup[] = []): Session {
 
   return {
     id: String(raw.id),
+    ownerId: String(raw.ownerId),
     title: raw.title,
     expectedCount: raw.expectedStudentCount,
     registeredCount: raw._count?.students ?? registrations.length,
@@ -152,13 +202,29 @@ function normalizeSession(raw: RawSession, groups: RawGroup[] = []): Session {
       id: String(role.id),
       name: role.name,
       slotsPerGroup: role.slotsPerGroup,
-      capacity: role.capacity ?? capacityByRole.get(role.id) ?? 0,
+      capacity: role.capacity !== undefined ? role.capacity : (capacityByRole.get(role.id) ?? 0),
       enrolled: role.registeredCount ?? role._count?.students ?? 0,
     })),
     registrations,
     groups: normalizeGroups(groups),
     createdAt: raw.createdAt,
   }
+}
+
+type RawAdminUser = {
+  id: number
+  email: string
+  name: string
+  role: 'user' | 'admin'
+  status?: 'active' | 'disabled'
+  google: boolean
+  hasPassword: boolean
+  sessionCount: number
+  createdAt: string
+}
+
+function normalizeAdminUser(user: RawAdminUser): AdminUser {
+  return { ...user, id: String(user.id), status: user.status || 'active' }
 }
 
 async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
@@ -186,31 +252,54 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
 }
 
 export const api = {
-  login: async (username: string, password: string) => {
-    const { admin } = await request<{ admin: { id: number; username: string } }>('/auth/login', {
+  authConfig: () => request<{ googleClientId: string | null }>('/auth/config'),
+  login: async (email: string, password: string, rememberMe = false) => {
+    const { user } = await request<{ user: { id: number; email: string; name: string; role: 'user' | 'admin' } }>('/auth/login', {
       method: 'POST',
-      body: JSON.stringify({ username, password }),
+      body: JSON.stringify({ email, password, rememberMe }),
     })
-    return { user: { id: String(admin.id), username: admin.username } }
+    return { user: { id: String(user.id), email: user.email, name: user.name, role: user.role } }
   },
+  register: async (name: string, email: string, password: string, rememberMe = false) => {
+    const { user } = await request<{ user: { id: number; email: string; name: string; role: 'user' | 'admin' } }>('/auth/register', {
+      method: 'POST',
+      body: JSON.stringify({ name, email, password, rememberMe }),
+    })
+    return { user: { id: String(user.id), email: user.email, name: user.name, role: user.role } }
+  },
+  googleLogin: async (idToken: string, rememberMe = false) => {
+    const { user } = await request<{ user: { id: number; email: string; name: string; role: 'user' | 'admin' } }>('/auth/google', {
+      method: 'POST',
+      body: JSON.stringify({ idToken, rememberMe }),
+    })
+    return { user: { id: String(user.id), email: user.email, name: user.name, role: user.role } }
+  },
+  forgotPassword: (email: string) => request<{ ok: boolean; resetUrl?: string }>('/auth/forgot-password', {
+    method: 'POST',
+    body: JSON.stringify({ email }),
+  }),
+  resetPassword: (token: string, password: string) => request<{ ok: boolean }>('/auth/reset-password', {
+    method: 'POST',
+    body: JSON.stringify({ token, password }),
+  }),
   logout: () => request<void>('/auth/logout', { method: 'POST' }),
   me: async () => {
-    const { admin } = await request<{ admin: { adminId: number; username: string } }>('/auth/me')
-    return { user: { id: String(admin.adminId), username: admin.username } }
+    const { user } = await request<{ user: { id: number; email: string; name: string; role: 'user' | 'admin' } }>('/auth/me')
+    return { user: { id: String(user.id), email: user.email, name: user.name, role: user.role } }
   },
   sessions: async () => {
-    const { sessions } = await request<{ sessions: RawSession[] }>('/admin/sessions')
+    const { sessions } = await request<{ sessions: RawSession[] }>('/sessions')
     return sessions.map((session) => normalizeSession(session))
   },
   session: async (id: string) => {
     const [{ session }, { groups }] = await Promise.all([
-      request<{ session: RawSession }>(`/admin/sessions/${id}`),
-      request<{ groups: RawGroup[] }>(`/admin/sessions/${id}/results`),
+      request<{ session: RawSession }>(`/sessions/${id}`),
+      request<{ groups: RawGroup[] }>(`/sessions/${id}/results`),
     ])
     return normalizeSession(session, groups)
   },
   createSession: async (input: CreateSessionInput) => {
-    const { session } = await request<{ session: RawSession }>('/admin/sessions', {
+    const { session } = await request<{ session: RawSession }>('/sessions', {
       method: 'POST',
       body: JSON.stringify({
         title: input.title,
@@ -222,20 +311,67 @@ export const api = {
   },
   setSessionStatus: async (id: string, nextStatus: 'open' | 'closed') => {
     const action = nextStatus === 'closed' ? 'close' : 'open'
-    await request(`/admin/sessions/${id}/${action}`, { method: 'POST' })
+    await request(`/sessions/${id}/${action}`, { method: 'POST' })
     return api.session(id)
   },
   shuffle: async (id: string) => {
-    await request(`/admin/sessions/${id}/shuffle`, { method: 'POST' })
+    await request(`/sessions/${id}/shuffle`, { method: 'POST' })
     return api.session(id)
   },
+  removeParticipant: async (sessionId: string, studentId: string) => {
+    await request(`/sessions/${sessionId}/students/${studentId}`, { method: 'DELETE' })
+    return api.session(sessionId)
+  },
+  adminOverview: () => request<{ overview: AdminOverview; charts: AdminCharts }>('/admin/overview'),
+  adminTraffic: (limit = 8) => request<{ events: Array<{ id: number; method: string; path: string; status: number; durationMs: number; ip: string | null; createdAt: string; user: { email: string; name: string } | null }> }>(`/admin/traffic?limit=${limit}`),
+  adminLogs: (limit = 8) => request<{ logs: Array<{ id: number; level: string; category: string; message: string; meta: unknown; ip: string | null; createdAt: string; user: { email: string; name: string } | null }> }>(`/admin/logs?limit=${limit}`),
+  adminSessions: async () => {
+    const { sessions } = await request<{
+      sessions: Array<{
+        id: number
+        title: string
+        status: string
+        createdAt: string
+        owner: { id: number; email: string; name: string }
+        _count: { students: number; groups: number }
+      }>
+    }>('/admin/sessions')
+    return sessions.map((session) => ({
+      id: String(session.id),
+      title: session.title,
+      status: status(session.status),
+      createdAt: session.createdAt,
+      owner: { id: String(session.owner.id), email: session.owner.email, name: session.owner.name },
+      registeredCount: session._count.students,
+      groupCount: session._count.groups,
+    } satisfies AdminSession))
+  },
+  adminUsers: async () => {
+    const { users } = await request<{ users: RawAdminUser[] }>('/admin/users')
+    return users.map(normalizeAdminUser)
+  },
+  adminCreateUser: async (input: { name: string; email: string; password: string; role: 'user' | 'admin' }) => {
+    const { user } = await request<{ user: RawAdminUser }>('/admin/users', {
+      method: 'POST',
+      body: JSON.stringify(input),
+    })
+    return normalizeAdminUser(user)
+  },
+  adminUpdateUser: async (id: string, input: { name?: string; email?: string; password?: string; role?: 'user' | 'admin'; status?: 'active' | 'disabled' }) => {
+    const { user } = await request<{ user: RawAdminUser }>(`/admin/users/${id}`, {
+      method: 'PATCH',
+      body: JSON.stringify(input),
+    })
+    return normalizeAdminUser(user)
+  },
+  adminDeleteUser: (id: string) => request<void>(`/admin/users/${id}`, { method: 'DELETE' }),
   publicSession: async (token: string) => {
     const { session } = await request<{
       session: {
         id: number
         title: string
         status: string
-        expectedStudentCount: number
+        expectedStudentCount: number | null
         registeredCount: number
         roles: RawRole[]
       }
@@ -250,10 +386,21 @@ export const api = {
         id: String(role.id),
         name: role.name,
         slotsPerGroup: role.slotsPerGroup,
-        capacity: role.capacity || 0,
+        capacity: role.capacity ?? null,
         enrolled: role.registeredCount || 0,
       })),
     }
+  },
+  publicResults: async (token: string) => {
+    const { session, groups } = await request<{
+      session: { id: number; title: string; status: string }
+      groups: RawGroup[]
+    }>(`/public/sessions/${token}/results`)
+    return {
+      title: session.title,
+      status: status(session.status),
+      groups: normalizeGroups(groups),
+    } satisfies PublicResults
   },
   enroll: async (token: string, name: string, roleId: string) => {
     const { student } = await request<{ student: RawStudent }>(`/public/sessions/${token}/enroll`, {

@@ -5,7 +5,9 @@ import { api, type User } from './api'
 interface AuthValue {
   user: User | null
   loading: boolean
-  login: (username: string, password: string) => Promise<void>
+  login: (email: string, password: string, rememberMe?: boolean) => Promise<void>
+  register: (name: string, email: string, password: string, rememberMe?: boolean) => Promise<void>
+  googleLogin: (idToken: string, rememberMe?: boolean) => Promise<void>
   logout: () => Promise<void>
 }
 
@@ -25,8 +27,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const value: AuthValue = {
     user,
     loading,
-    login: async (username, password) => {
-      const result = await api.login(username, password)
+    login: async (email, password, rememberMe) => {
+      const result = await api.login(email, password, rememberMe)
+      setUser(result.user)
+    },
+    register: async (name, email, password, rememberMe) => {
+      const result = await api.register(name, email, password, rememberMe)
+      setUser(result.user)
+    },
+    googleLogin: async (idToken, rememberMe) => {
+      const result = await api.googleLogin(idToken, rememberMe)
       setUser(result.user)
     },
     logout: async () => {
@@ -50,5 +60,15 @@ export function ProtectedRoute() {
 
   if (loading) return <div className="page-state"><span className="spinner" />Checking your session…</div>
   if (!user) return <Navigate to="/login" replace state={{ from: location }} />
+  return <Outlet />
+}
+
+export function AdminRoute() {
+  const { user, loading } = useAuth()
+  const location = useLocation()
+
+  if (loading) return <div className="page-state"><span className="spinner" />Checking your session…</div>
+  if (!user) return <Navigate to="/login" replace state={{ from: location }} />
+  if (user.role !== 'admin') return <Navigate to="/sessions" replace />
   return <Outlet />
 }

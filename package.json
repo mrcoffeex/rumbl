@@ -14,7 +14,9 @@
     "typecheck": "npm run typecheck -w server && npm run build -w client",
     "db:generate": "npm run prisma:generate -w server",
     "db:migrate": "npm run prisma:migrate -w server",
-    "db:seed": "npm run prisma:seed -w server"
+    "db:deploy": "npm run prisma:deploy -w server",
+    "db:seed": "npm run prisma:seed -w server",
+    "postinstall": "npm run db:generate"
   },
   "devDependencies": {
     "concurrently": "^9.2.1"

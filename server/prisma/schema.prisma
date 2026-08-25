@@ -1,10 +1,12 @@
 generator client {
-  provider = "prisma-client-js"
+  provider      = "prisma-client-js"
+  binaryTargets = ["native", "rhel-openssl-3.0.x"]
 }
 
 datasource db {
-  provider = "mysql"
-  url      = env("DATABASE_URL")
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
 }
 
 enum SessionStatus {
@@ -14,25 +16,88 @@ enum SessionStatus {
   GROUPED
 }
 
-model Admin {
-  id           Int      @id @default(autoincrement())
-  username     String   @unique @db.VarChar(100)
-  passwordHash String   @db.VarChar(255)
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
+enum UserRole {
+  USER
+  ADMIN
+}
+
+enum UserStatus {
+  ACTIVE
+  DISABLED
+}
+
+model User {
+  id             Int             @id @default(autoincrement())
+  email          String          @unique @db.VarChar(190)
+  name           String          @db.VarChar(120)
+  passwordHash   String?         @db.VarChar(255)
+  googleId       String?         @unique @db.VarChar(64)
+  role           UserRole        @default(USER)
+  status         UserStatus      @default(ACTIVE)
+  createdAt      DateTime        @default(now())
+  updatedAt      DateTime        @updatedAt
+  sessions       Session[]
+  passwordResets PasswordReset[]
+  logs           SystemLog[]
+  traffic        TrafficEvent[]
+}
+
+model PasswordReset {
+  id        Int       @id @default(autoincrement())
+  userId    Int
+  tokenHash String    @unique @db.VarChar(64)
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime  @default(now())
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+model SystemLog {
+  id        Int      @id @default(autoincrement())
+  level     String   @db.VarChar(20)
+  category  String   @db.VarChar(40)
+  message   String   @db.VarChar(500)
+  meta      Json?
+  ip        String?  @db.VarChar(64)
+  userId    Int?
+  createdAt DateTime @default(now())
+  user      User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([createdAt])
+  @@index([category, createdAt])
+}
+
+model TrafficEvent {
+  id         Int      @id @default(autoincrement())
+  method     String   @db.VarChar(10)
+  path       String   @db.VarChar(255)
+  status     Int
+  durationMs Int
+  ip         String?  @db.VarChar(64)
+  userId     Int?
+  createdAt  DateTime @default(now())
+  user       User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([createdAt])
 }
 
 model Session {
   id                   Int              @id @default(autoincrement())
+  ownerId              Int
   title                String           @db.VarChar(200)
-  expectedStudentCount Int
+  expectedStudentCount Int?
   publicToken          String           @unique @db.VarChar(64)
   status               SessionStatus    @default(DRAFT)
   createdAt            DateTime         @default(now())
   updatedAt            DateTime         @updatedAt
+  owner                User             @relation(fields: [ownerId], references: [id], onDelete: Cascade)
   roles                RoleDefinition[]
   students             Student[]
   groups               GeneratedGroup[]
+
+  @@index([ownerId])
 }
 
 model RoleDefinition {
@@ -51,13 +116,13 @@ model RoleDefinition {
 }
 
 model Student {
-  id        Int           @id @default(autoincrement())
-  sessionId Int
-  roleId    Int
-  name      String        @db.VarChar(150)
-  createdAt DateTime      @default(now())
-  session   Session       @relation(fields: [sessionId], references: [id], onDelete: Cascade)
-  role      RoleDefinition @relation(fields: [roleId], references: [id], onDelete: Restrict)
+  id         Int            @id @default(autoincrement())
+  sessionId  Int
+  roleId     Int
+  name       String         @db.VarChar(150)
+  createdAt  DateTime       @default(now())
+  session    Session        @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  role       RoleDefinition @relation(fields: [roleId], references: [id], onDelete: Restrict)
   membership GroupMember?
 
   @@unique([sessionId, name])

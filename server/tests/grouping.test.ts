@@ -19,7 +19,14 @@ describe("calculateCapacity", () => {
     expect(plan.baseGroupCount).toBe(13);
     expect(plan.totalSlotsPerGroup).toBe(3);
     expect(plan.roles.map((role) => role.capacity)).toEqual([14, 13, 13]);
-    expect(plan.roles.reduce((sum, role) => sum + role.capacity, 0)).toBe(40);
+    expect(plan.roles.reduce((sum, role) => sum + (role.capacity ?? 0), 0)).toBe(40);
+  });
+
+  it("leaves seats open when there is no participant limit", () => {
+    const plan = calculateCapacity(null, roles);
+
+    expect(plan.totalCapacity).toBeNull();
+    expect(plan.roles.every((role) => role.capacity === null)).toBe(true);
   });
 
   it("distributes remainder seats according to weighted role slots", () => {
@@ -37,7 +44,7 @@ describe("generateGroups", () => {
   it("preserves all students and role requirements for 40x3", () => {
     const capacities = calculateCapacity(40, roles).roles;
     const students: GroupableStudent[] = capacities.flatMap((role) =>
-      Array.from({ length: role.capacity }, (_, index) => ({
+      Array.from({ length: role.capacity ?? 0 }, (_, index) => ({
         id: role.id * 100 + index,
         name: `${role.name} ${index}`,
         roleId: role.id,

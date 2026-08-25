@@ -11,6 +11,7 @@
     "test:watch": "vitest",
     "prisma:generate": "prisma generate",
     "prisma:migrate": "prisma migrate dev",
+    "prisma:deploy": "prisma migrate deploy",
     "prisma:seed": "prisma db seed"
   },
   "prisma": {
@@ -24,8 +25,10 @@
     "dotenv": "^17.2.1",
     "express": "^5.1.0",
     "express-rate-limit": "^8.0.1",
+    "google-auth-library": "^11.0.2",
     "helmet": "^8.1.0",
     "jsonwebtoken": "^9.0.2",
+    "nodemailer": "^9.0.5",
     "zod": "^4.0.17"
   },
   "devDependencies": {
@@ -34,6 +37,7 @@
     "@types/express": "^5.0.3",
     "@types/jsonwebtoken": "^9.0.10",
     "@types/node": "^24.2.1",
+    "@types/nodemailer": "^8.0.1",
     "@types/supertest": "^6.0.3",
     "prisma": "^6.19.0",
     "supertest": "^7.1.4",
