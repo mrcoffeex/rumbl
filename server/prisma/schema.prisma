@@ -1,0 +1,91 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mysql"
+  url      = env("DATABASE_URL")
+}
+
+enum SessionStatus {
+  DRAFT
+  OPEN
+  CLOSED
+  GROUPED
+}
+
+model Admin {
+  id           Int      @id @default(autoincrement())
+  username     String   @unique @db.VarChar(100)
+  passwordHash String   @db.VarChar(255)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+}
+
+model Session {
+  id                   Int              @id @default(autoincrement())
+  title                String           @db.VarChar(200)
+  expectedStudentCount Int
+  publicToken          String           @unique @db.VarChar(64)
+  status               SessionStatus    @default(DRAFT)
+  createdAt            DateTime         @default(now())
+  updatedAt            DateTime         @updatedAt
+  roles                RoleDefinition[]
+  students             Student[]
+  groups               GeneratedGroup[]
+}
+
+model RoleDefinition {
+  id            Int           @id @default(autoincrement())
+  sessionId     Int
+  name          String        @db.VarChar(100)
+  slotsPerGroup Int
+  position      Int
+  session       Session       @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  students      Student[]
+  members       GroupMember[]
+
+  @@unique([sessionId, name])
+  @@unique([sessionId, position])
+  @@index([sessionId])
+}
+
+model Student {
+  id        Int           @id @default(autoincrement())
+  sessionId Int
+  roleId    Int
+  name      String        @db.VarChar(150)
+  createdAt DateTime      @default(now())
+  session   Session       @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  role      RoleDefinition @relation(fields: [roleId], references: [id], onDelete: Restrict)
+  membership GroupMember?
+
+  @@unique([sessionId, name])
+  @@index([sessionId, roleId])
+}
+
+model GeneratedGroup {
+  id        Int           @id @default(autoincrement())
+  sessionId Int
+  name      String        @db.VarChar(100)
+  position  Int
+  createdAt DateTime      @default(now())
+  session   Session       @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  members   GroupMember[]
+
+  @@unique([sessionId, position])
+  @@index([sessionId])
+}
+
+model GroupMember {
+  id        Int            @id @default(autoincrement())
+  groupId   Int
+  studentId Int            @unique
+  roleId    Int
+  group     GeneratedGroup @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  student   Student        @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  role      RoleDefinition @relation(fields: [roleId], references: [id], onDelete: Restrict)
+
+  @@index([groupId])
+  @@index([roleId])
+}

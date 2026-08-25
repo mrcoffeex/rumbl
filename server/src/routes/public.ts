@@ -1,0 +1,167 @@
+import { Router } from "express";
+import rateLimit from "express-rate-limit";
+import { randomUUID } from "node:crypto";
+import { Prisma, SessionStatus } from "@prisma/client";
+import { z } from "zod";
+import { prisma } from "../lib/prisma";
+import { env } from "../lib/env";
+import { calculateCapacity } from "../lib/grouping";
+import { HttpError } from "../middleware/errors";
+
+export const publicRouter = Router();
+
+const DEVICE_COOKIE = "rumbl_device";
+const deviceId = z.string().uuid();
+
+publicRouter.use((req, res, next) => {
+  let id = req.cookies[DEVICE_COOKIE];
+  if (!deviceId.safeParse(id).success) {
+    id = randomUUID();
+    res.cookie(DEVICE_COOKIE, id, {
+      httpOnly: true,
+      secure: env.NODE_ENV === "production",
+      sameSite: "lax",
+      maxAge: 365 * 24 * 60 * 60 * 1000,
+      path: "/api/public",
+    });
+  }
+  req.cookies[DEVICE_COOKIE] = id;
+  next();
+});
+
+const enrollLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  limit: 1,
+  keyGenerator: (req) => String(req.cookies[DEVICE_COOKIE]),
+  standardHeaders: "draft-8",
+  legacyHeaders: false,
+  message: { error: "Please wait one minute before registering another student" },
+});
+
+const tokenParam = z.string().min(16).max(64);
+
+publicRouter.get("/sessions/:token", async (req, res) => {
+  const token = tokenParam.parse(req.params.token);
+  const session = await prisma.session.findUnique({
+    where: { publicToken: token },
+    include: {
+      roles: {
+        orderBy: { position: "asc" },
+        include: { _count: { select: { students: true } } },
+      },
+      _count: { select: { students: true } },
+    },
+  });
+  if (!session) throw new HttpError(404, "Session not found");
+
+  const capacity = calculateCapacity(session.expectedStudentCount, session.roles);
+  res.json({
+    session: {
+      id: session.id,
+      title: session.title,
+      status: session.status,
+      expectedStudentCount: session.expectedStudentCount,
+      registeredCount: session._count.students,
+      roles: session.roles.map((role) => ({
+        id: role.id,
+        name: role.name,
+        slotsPerGroup: role.slotsPerGroup,
+        capacity: capacity.roles.find((item) => item.id === role.id)!.capacity,
+        registeredCount: role._count.students,
+      })),
+    },
+  });
+});
+
+publicRouter.post("/sessions/:token/enroll", enrollLimiter, async (req, res) => {
+  const token = tokenParam.parse(req.params.token);
+  const input = z
+    .object({
+      name: z.string().trim().min(1).max(150),
+      roleId: z.number().int().positive(),
+    })
+    .parse(req.body);
+
+  const student = await withSerializableRetry(async () =>
+    prisma.$transaction(
+      async (tx) => {
+        const session = await tx.session.findUnique({
+          where: { publicToken: token },
+          include: { roles: { orderBy: { position: "asc" } } },
+        });
+        if (!session) throw new HttpError(404, "Session not found");
+        if (session.status !== SessionStatus.OPEN) {
+          throw new HttpError(409, "This session is not accepting registrations");
+        }
+
+        const role = session.roles.find((item) => item.id === input.roleId);
+        if (!role) throw new HttpError(400, "Role does not belong to this session");
+
+        const duplicate = await tx.student.findFirst({
+          where: { sessionId: session.id, name: input.name },
+          select: { id: true },
+        });
+        if (duplicate) throw new HttpError(409, "That name is already registered");
+
+        const capacity = calculateCapacity(
+          session.expectedStudentCount,
+          session.roles,
+        ).roles.find((item) => item.id === role.id)!.capacity;
+        const registered = await tx.student.count({
+          where: { sessionId: session.id, roleId: role.id },
+        });
+        if (registered >= capacity) throw new HttpError(409, "That role is full");
+
+        return tx.student.create({
+          data: { sessionId: session.id, roleId: role.id, name: input.name },
+          include: { role: true },
+        });
+      },
+      { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
+    ),
+  );
+
+  res.status(201).json({ student });
+});
+
+publicRouter.get("/sessions/:token/results", async (req, res) => {
+  const token = tokenParam.parse(req.params.token);
+  const session = await prisma.session.findUnique({
+    where: { publicToken: token },
+    select: { id: true, status: true },
+  });
+  if (!session) throw new HttpError(404, "Session not found");
+  if (session.status !== SessionStatus.GROUPED) {
+    throw new HttpError(409, "Results are not available");
+  }
+
+  const groups = await prisma.generatedGroup.findMany({
+    where: { sessionId: session.id },
+    orderBy: { position: "asc" },
+    select: {
+      name: true,
+      position: true,
+      members: {
+        orderBy: { id: "asc" },
+        select: {
+          student: { select: { id: true, name: true } },
+          role: { select: { id: true, name: true } },
+        },
+      },
+    },
+  });
+  res.json({ groups });
+});
+
+async function withSerializableRetry<T>(operation: () => Promise<T>): Promise<T> {
+  for (let attempt = 1; attempt <= 3; attempt += 1) {
+    try {
+      return await operation();
+    } catch (error) {
+      const retryable =
+        error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2034";
+      if (!retryable || attempt === 3) throw error;
+    }
+  }
+  throw new Error("Transaction retry exhausted");
+}
