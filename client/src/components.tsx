@@ -1,6 +1,6 @@
 import { LogOut, UsersRound } from 'lucide-react'
 import { useEffect, useRef } from 'react'
-import { Link, NavLink, Outlet } from 'react-router-dom'
+import { Link, NavLink, Outlet, useNavigate } from 'react-router-dom'
 import type { Group } from './api'
 import { useAuth } from './auth'
 
@@ -26,20 +26,45 @@ export function PublicFooter() {
 
 export function AppLayout() {
   const { user, logout } = useAuth()
+  const navigate = useNavigate()
+  const admin = user?.role === 'admin'
+
+  async function signOut() {
+    await logout()
+    navigate('/', { replace: true })
+  }
+
   return (
     <div className="app-shell">
       <header className="site-header">
-        <Brand to="/sessions" />
-        <nav aria-label="Main navigation">
-          <NavLink to="/sessions">Groups</NavLink>
-          <NavLink to="/docs">Docs</NavLink>
-          {user?.role === 'admin' && <NavLink to="/admin" end>Dashboard</NavLink>}
-          {user?.role === 'admin' && <NavLink to="/admin/groups">All groups</NavLink>}
-          {user?.role === 'admin' && <NavLink to="/admin/users">Users</NavLink>}
-          <button className="nav-button" onClick={() => void logout()} title={`Sign out ${user?.email}`}>
-            <LogOut size={17} /> <span>Sign out</span>
-          </button>
-        </nav>
+        <Brand to={admin ? '/admin' : '/sessions'} />
+        <div className="site-header-bar">
+          <nav className="nav-links" aria-label="Main navigation">
+            {admin && (
+              <div className="nav-cluster" aria-label="Administration">
+                <span className="nav-label">Admin</span>
+                <NavLink to="/admin" end>Dashboard</NavLink>
+                <NavLink to="/admin/groups">All groups</NavLink>
+                <NavLink to="/admin/users">Users</NavLink>
+              </div>
+            )}
+            {admin && <span className="nav-divider" aria-hidden="true" />}
+            <div className="nav-cluster" aria-label="Workspace">
+              <NavLink to="/sessions">{admin ? 'My groups' : 'Groups'}</NavLink>
+              <NavLink to="/settings">Settings</NavLink>
+              <NavLink to="/docs">Docs</NavLink>
+            </div>
+          </nav>
+          <div className="nav-account">
+            <NavLink to="/settings" className="nav-user" title="Profile settings">
+              <strong>{user?.name}</strong>
+              <span>{user?.email}</span>
+            </NavLink>
+            <button type="button" className="button secondary small signout-button" onClick={() => void signOut()}>
+              <LogOut size={16} /> Sign out
+            </button>
+          </div>
+        </div>
       </header>
       <main className="main-content"><Outlet /></main>
       <footer className="app-footer">

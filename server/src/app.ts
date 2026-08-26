@@ -11,6 +11,7 @@ import { publicRouter } from "./routes/public";
 import { errorHandler, notFound } from "./middleware/errors";
 import { optionalAuth } from "./middleware/auth";
 import { trafficLogger } from "./middleware/traffic";
+import { checkDatabase } from "./lib/database";
 
 export const app = express();
 
@@ -37,8 +38,12 @@ app.use(
   }),
 );
 
-app.get("/api/health", (_req, res) => {
-  res.json({ status: "ok" });
+app.get("/api/health", async (_req, res) => {
+  const connected = await checkDatabase();
+  res.status(connected ? 200 : 503).json({
+    status: connected ? "ok" : "unavailable",
+    database: connected ? "connected" : "disconnected",
+  });
 });
 app.use("/api/auth", authRouter);
 app.use("/api/sessions", sessionRouter);

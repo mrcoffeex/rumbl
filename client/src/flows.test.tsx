@@ -5,7 +5,9 @@ import userEvent from '@testing-library/user-event'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import { AdminDashboardPage, AdminGroupsPage, UsersPage } from './admin'
 import { AuthProvider } from './auth'
+import { AppLayout } from './components'
 import { DocsPage } from './DocsPage'
+import { ProfilePage } from './ProfilePage'
 import { LandingPage } from './LandingPage'
 import { JoinPage, LoginPage, ResultsPage, SessionDetailPage } from './pages'
 import { PrivacyPage, TermsPage } from './LegalPages'
@@ -302,12 +304,14 @@ describe('critical user flows', () => {
     const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input)
       if (url.includes('/api/admin/overview')) {
+        const range = new URL(url, 'http://localhost').searchParams.get('range') || '14d'
         return json({
-          overview: { users: 4, admins: 1, sessions: 2, students: 9, requests24h: 18, errors24h: 0 },
+          overview: { users: 4, admins: 1, sessions: 2, students: 9, requests: range === '7d' ? 42 : 18, errors: 0 },
           charts: {
-            trafficByDay: [{ date: '2026-08-25', requests: 18, errors: 0 }],
+            range,
+            trafficByDay: range === '24h' ? [] : [{ date: '2026-08-25', requests: 18, errors: 0 }],
             signupsByDay: [{ date: '2026-08-25', users: 1 }],
-            hourlyTraffic: [{ hour: new Date().toISOString(), requests: 3 }],
+            hourlyTraffic: range === '24h' ? [{ hour: new Date().toISOString(), requests: 3 }] : [],
             sessionsByStatus: [
               { status: 'draft', count: 0 },
               { status: 'open', count: 1 },
@@ -329,6 +333,7 @@ describe('critical user flows', () => {
     })
     vi.stubGlobal('fetch', fetchMock)
 
+    const user = userEvent.setup()
     render(
       <AuthProvider>
         <MemoryRouter>
@@ -342,6 +347,11 @@ describe('critical user flows', () => {
     expect(screen.getByText('4')).toBeTruthy()
     expect(screen.getByText('Requests over the last 14 days')).toBeTruthy()
     expect(screen.getByRole('link', { name: 'Manage users' })).toBeTruthy()
+    expect(screen.getByRole('button', { name: '14d', pressed: true })).toBeTruthy()
+
+    await user.click(screen.getByRole('button', { name: '7d' }))
+    expect(await screen.findByText('Requests over the last 7 days')).toBeTruthy()
+    expect(fetchMock.mock.calls.some(([input]) => String(input).includes('/api/admin/overview?range=7d'))).toBe(true)
   })
 
   it('lists users for an administrator', async () => {
@@ -539,6 +549,108 @@ describe('critical user flows', () => {
     await user.click(screen.getByRole('button', { name: 'Open' }))
     expect(screen.getByText('Software Studio')).toBeTruthy()
     expect(screen.queryByText('Debate Night')).toBeNull()
+  })
+
+  it('lets a user update profile settings from the header', async () => {
+    const account = {
+      id: 2,
+      email: 'teacher@school.edu',
+      name: 'Teacher',
+      role: 'user',
+      google: false,
+      hasPassword: true,
+      createdAt: '2026-01-15T00:00:00.000Z',
+    }
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input)
+      if (url.endsWith('/api/auth/me') && init?.method === 'PATCH') {
+        const body = JSON.parse(String(init.body)) as { name?: string; email?: string }
+        return json({ user: { ...account, name: body.name ?? account.name, email: body.email ?? account.email } })
+      }
+      if (url.endsWith('/api/auth/me')) return json({ user: account })
+      return json({ error: 'Unexpected request' }, 500)
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    render(
+      <AuthProvider>
+        <MemoryRouter initialEntries={['/sessions']}>
+          <Routes>
+            <Route element={<AppLayout />}>
+              <Route path="/sessions" element={<div>My groups</div>} />
+              <Route path="/settings" element={<ProfilePage />} />
+            </Route>
+          </Routes>
+        </MemoryRouter>
+      </AuthProvider>,
+    )
+
+    const user = userEvent.setup()
+    expect(await screen.findByRole('link', { name: 'Settings' })).toBeTruthy()
+    expect(screen.getByRole('link', { name: /Teacher/ })).toBeTruthy()
+    await user.click(screen.getByRole('link', { name: 'Settings' }))
+
+    expect(await screen.findByRole('heading', { name: 'Profile settings' })).toBeTruthy()
+    expect(screen.getByDisplayValue('Teacher')).toBeTruthy()
+    expect(screen.getByDisplayValue('teacher@school.edu')).toBeTruthy()
+    expect(screen.getByText('User')).toBeTruthy()
+    expect(screen.getByLabelText('Current password')).toBeTruthy()
+
+    const nameField = screen.getByLabelText('Name')
+    await user.clear(nameField)
+    await user.type(nameField, 'Alex Rivera')
+    await user.click(screen.getByRole('button', { name: 'Save profile' }))
+
+    expect(await screen.findByText('Profile saved.')).toBeTruthy()
+    const patch = fetchMock.mock.calls.find(([, init]) => init?.method === 'PATCH')
+    expect(patch).toBeTruthy()
+    expect(JSON.parse(String(patch?.[1]?.body))).toMatchObject({ name: 'Alex Rivera', email: 'teacher@school.edu' })
+  })
+
+  it('lets an admin set a password on a Google-only account', async () => {
+    const account = {
+      id: 1,
+      email: 'admin@rumbl.local',
+      name: 'Admin',
+      role: 'admin',
+      google: true,
+      hasPassword: false,
+      createdAt: '2026-02-01T00:00:00.000Z',
+    }
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input)
+      if (url.endsWith('/api/auth/me') && init?.method === 'PATCH') {
+        return json({ user: { ...account, hasPassword: true } })
+      }
+      if (url.endsWith('/api/auth/me')) return json({ user: account })
+      return json({ error: 'Unexpected request' }, 500)
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    render(
+      <AuthProvider>
+        <MemoryRouter initialEntries={['/settings']}>
+          <Routes>
+            <Route path="/settings" element={<ProfilePage />} />
+          </Routes>
+        </MemoryRouter>
+      </AuthProvider>,
+    )
+
+    const user = userEvent.setup()
+    expect(await screen.findByRole('heading', { name: 'Profile settings' })).toBeTruthy()
+    expect(screen.getByRole('heading', { name: 'Set a password' })).toBeTruthy()
+    expect(screen.getByText('Administrator')).toBeTruthy()
+    expect(screen.queryByLabelText('Current password')).toBeNull()
+    expect(screen.getByText(/google sign-in still uses your google account/i)).toBeTruthy()
+
+    await user.type(screen.getByLabelText('New password'), 'newpass12')
+    await user.type(screen.getByLabelText('Confirm new password'), 'newpass12')
+    await user.click(screen.getByRole('button', { name: 'Set password' }))
+
+    expect(await screen.findByText(/password added/i)).toBeTruthy()
+    const patch = fetchMock.mock.calls.find(([, init]) => init?.method === 'PATCH')
+    expect(JSON.parse(String(patch?.[1]?.body))).toEqual({ password: 'newpass12' })
   })
 })
 

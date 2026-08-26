@@ -7,7 +7,7 @@ import {
   Area, AreaChart, Bar, BarChart, CartesianGrid, Cell, Pie, PieChart,
   ResponsiveContainer, Tooltip, XAxis, YAxis,
 } from 'recharts'
-import { api, type AdminCharts, type AdminOverview, type AdminUser, type SessionStatus } from './api'
+import { api, type AdminCharts, type AdminOverview, type AdminUser, type DashboardRange, type SessionStatus } from './api'
 import { useAuth } from './auth'
 import { ConfirmationModal, ErrorState, LoadingState, PageHeading, StatusBadge } from './components'
 import { useRemote } from './pages'
@@ -37,6 +37,27 @@ const BUCKET_LABELS: Record<string, string> = {
   '2xx': 'Success',
   '4xx': 'Client errors',
   '5xx': 'Server errors',
+}
+
+const RANGE_FILTERS: Array<{ id: DashboardRange; label: string }> = [
+  { id: '24h', label: '24h' },
+  { id: '7d', label: '7d' },
+  { id: '14d', label: '14d' },
+  { id: '30d', label: '30d' },
+]
+
+const RANGE_LABELS: Record<DashboardRange, string> = {
+  '24h': 'last 24 hours',
+  '7d': 'last 7 days',
+  '14d': 'last 14 days',
+  '30d': 'last 30 days',
+}
+
+const RANGE_SHORT: Record<DashboardRange, string> = {
+  '24h': '24 hours',
+  '7d': '7 days',
+  '14d': '14 days',
+  '30d': '30 days',
 }
 
 function formatDay(date: string) {
@@ -134,14 +155,15 @@ function DashTooltip({
 
 export function AdminDashboardPage() {
   const { user } = useAuth()
-  const dashboard = useRemote(() => api.adminOverview(), [])
+  const [range, setRange] = useState<DashboardRange>('14d')
+  const dashboard = useRemote(() => api.adminOverview(range), [range])
   const traffic = useRemote(() => api.adminTraffic(8).then((result) => result.events), [])
   const logs = useRemote(() => api.adminLogs(8).then((result) => result.logs), [])
   const overview = dashboard.data?.overview
   const charts = dashboard.data?.charts
   const firstName = user?.name?.trim().split(/\s+/)[0]
   const summary = overview
-    ? `${overview.users} accounts · ${overview.sessions} sessions · ${overview.requests24h} requests in the last day`
+    ? `${overview.users} accounts · ${overview.sessions} sessions · ${overview.requests} requests in the ${RANGE_LABELS[range]}`
     : 'Live activity across accounts, sessions, and traffic.'
 
   return (
@@ -152,9 +174,24 @@ export function AdminDashboardPage() {
         description={firstName ? `Hi ${firstName}. ${summary}` : summary}
         action={<Link className="button secondary" to="/admin/users"><Users size={17} />Manage users</Link>}
       />
+      <div className="filter-bar dashboard-range-bar">
+        <div className="filter-chips" role="group" aria-label="Filter by time range">
+          {RANGE_FILTERS.map((filter) => (
+            <button
+              type="button"
+              key={filter.id}
+              className={`filter-chip${range === filter.id ? ' selected' : ''}`}
+              aria-pressed={range === filter.id}
+              onClick={() => setRange(filter.id)}
+            >
+              {filter.label}
+            </button>
+          ))}
+        </div>
+      </div>
       {dashboard.error ? <ErrorState message={dashboard.error} retry={dashboard.retry} /> :
         dashboard.loading || !overview || !charts ? <LoadingState label="Loading dashboard…" /> :
-          <DashboardBody overview={overview} charts={charts} />}
+          <DashboardBody overview={overview} charts={charts} range={range} />}
       <div className="dash-feed">
         <article className="card dash-panel">
           <header>
@@ -189,7 +226,7 @@ export function AdminDashboardPage() {
   )
 }
 
-function DashboardBody({ overview, charts }: { overview: AdminOverview; charts: AdminCharts }) {
+function DashboardBody({ overview, charts, range }: { overview: AdminOverview; charts: AdminCharts; range: DashboardRange }) {
   const newUsers = charts.signupsByDay.reduce((sum, row) => sum + row.users, 0)
   const sessionHint = charts.sessionsByStatus
     .filter((row) => row.count > 0)
@@ -202,7 +239,7 @@ function DashboardBody({ overview, charts }: { overview: AdminOverview; charts: 
         <Link className="card kpi-card" to="/admin/users" aria-label="View user accounts">
           <div className="kpi-top"><span className="kpi-icon"><Users size={16} /></span><p className="eyebrow">Users</p></div>
           <h2>{overview.users}</h2>
-          <p>{overview.admins} admin{overview.admins === 1 ? '' : 's'} · {newUsers} new in 14 days</p>
+          <p>{overview.admins} admin{overview.admins === 1 ? '' : 's'} · {newUsers} new in {RANGE_SHORT[range]}</p>
         </Link>
         <Link className="card kpi-card" to="/admin/groups" aria-label="View all groups">
           <div className="kpi-top"><span className="kpi-icon"><FolderKanban size={16} /></span><p className="eyebrow">Sessions</p></div>
@@ -214,49 +251,62 @@ function DashboardBody({ overview, charts }: { overview: AdminOverview; charts: 
           <h2>{overview.students}</h2>
           <p>Registered across every session</p>
         </article>
-        <article className={`card kpi-card${overview.errors24h ? ' alert' : ''}`}>
-          <div className="kpi-top"><span className="kpi-icon">{overview.errors24h ? <TriangleAlert size={16} /> : <Activity size={16} />}</span><p className="eyebrow">Last 24 hours</p></div>
-          <h2>{overview.requests24h}</h2>
-          <p>{overview.errors24h ? `${overview.errors24h} error${overview.errors24h === 1 ? '' : 's'} in the last day` : 'No errors in the last day'}</p>
+        <article className={`card kpi-card${overview.errors ? ' alert' : ''}`}>
+          <div className="kpi-top"><span className="kpi-icon">{overview.errors ? <TriangleAlert size={16} /> : <Activity size={16} />}</span><p className="eyebrow">{RANGE_FILTERS.find((item) => item.id === range)?.label}</p></div>
+          <h2>{overview.requests}</h2>
+          <p>{overview.errors ? `${overview.errors} error${overview.errors === 1 ? '' : 's'} in the ${RANGE_LABELS[range]}` : `No errors in the ${RANGE_LABELS[range]}`}</p>
         </article>
       </div>
-      <DashboardCharts charts={charts} />
+      <DashboardCharts charts={charts} range={range} />
     </>
   )
 }
 
-function DashboardCharts({ charts }: { charts: AdminCharts }) {
-  const trafficEmpty = !charts.trafficByDay.some((row) => row.requests)
-  const hourlyEmpty = !charts.hourlyTraffic.some((row) => row.requests)
+function DashboardCharts({ charts, range }: { charts: AdminCharts; range: DashboardRange }) {
+  const hourlyMode = range === '24h'
+  const trafficEmpty = hourlyMode
+    ? !charts.hourlyTraffic.some((row) => row.requests)
+    : !charts.trafficByDay.some((row) => row.requests)
   const statusEmpty = !charts.sessionsByStatus.some((row) => row.count)
   const bucketTotal = charts.requestsByStatus.reduce((sum, row) => sum + row.count, 0)
   const sessionTotal = charts.sessionsByStatus.reduce((sum, row) => sum + row.count, 0)
+  const signupEmpty = !charts.signupsByDay.some((row) => row.users)
 
   return (
     <>
       <div className="dash-primary">
         <ChartCard
           title="Traffic"
-          meta="Requests over the last 14 days"
+          meta={hourlyMode ? 'Requests by hour' : `Requests over the ${RANGE_LABELS[range]}`}
           empty={trafficEmpty}
           emptyText="No API traffic yet. This chart fills in as people use Rumbl."
-          legend={<div className="chart-legend"><span><i style={{ background: ORANGE }} />Requests</span><span><i style={{ background: '#a53022' }} />Errors</span></div>}
+          legend={<div className="chart-legend"><span><i style={{ background: ORANGE }} />Requests</span>{!hourlyMode && <span><i style={{ background: '#a53022' }} />Errors</span>}</div>}
         >
           <ResponsiveContainer width="100%" height="100%">
-            <AreaChart data={charts.trafficByDay} margin={{ top: 8, right: 4, left: 0, bottom: 0 }}>
-              <defs>
-                <linearGradient id="trafficFill" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="0%" stopColor={ORANGE} stopOpacity={0.28} />
-                  <stop offset="100%" stopColor={ORANGE} stopOpacity={0.02} />
-                </linearGradient>
-              </defs>
-              <CartesianGrid stroke={LINE} vertical={false} />
-              <XAxis dataKey="date" tickFormatter={formatDay} tick={{ fill: MUTED, fontSize: 11 }} axisLine={{ stroke: LINE }} tickLine={false} />
-              <YAxis allowDecimals={false} width={28} tick={{ fill: MUTED, fontSize: 11 }} axisLine={false} tickLine={false} />
-              <Tooltip cursor={{ stroke: LINE }} content={<DashTooltip formatLabel={formatDayLabel} />} />
-              <Area type="monotone" dataKey="requests" name="Requests" stroke={ORANGE} fill="url(#trafficFill)" strokeWidth={2.2} />
-              <Area type="monotone" dataKey="errors" name="Errors" stroke="#a53022" fill="transparent" strokeWidth={2} />
-            </AreaChart>
+            {hourlyMode ? (
+              <BarChart data={charts.hourlyTraffic} margin={{ top: 8, right: 4, left: 0, bottom: 0 }}>
+                <CartesianGrid stroke={LINE} vertical={false} />
+                <XAxis dataKey="hour" tickFormatter={formatHour} interval={3} tick={{ fill: MUTED, fontSize: 11 }} axisLine={{ stroke: LINE }} tickLine={false} />
+                <YAxis allowDecimals={false} width={28} tick={{ fill: MUTED, fontSize: 11 }} axisLine={false} tickLine={false} />
+                <Tooltip cursor={{ fill: 'rgba(38, 37, 30, .04)' }} content={<DashTooltip formatLabel={formatHourLabel} />} />
+                <Bar dataKey="requests" name="Requests" fill={ORANGE} radius={[3, 3, 0, 0]} maxBarSize={18} />
+              </BarChart>
+            ) : (
+              <AreaChart data={charts.trafficByDay} margin={{ top: 8, right: 4, left: 0, bottom: 0 }}>
+                <defs>
+                  <linearGradient id="trafficFill" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="0%" stopColor={ORANGE} stopOpacity={0.28} />
+                    <stop offset="100%" stopColor={ORANGE} stopOpacity={0.02} />
+                  </linearGradient>
+                </defs>
+                <CartesianGrid stroke={LINE} vertical={false} />
+                <XAxis dataKey="date" tickFormatter={formatDay} tick={{ fill: MUTED, fontSize: 11 }} axisLine={{ stroke: LINE }} tickLine={false} />
+                <YAxis allowDecimals={false} width={28} tick={{ fill: MUTED, fontSize: 11 }} axisLine={false} tickLine={false} />
+                <Tooltip cursor={{ stroke: LINE }} content={<DashTooltip formatLabel={formatDayLabel} />} />
+                <Area type="monotone" dataKey="requests" name="Requests" stroke={ORANGE} fill="url(#trafficFill)" strokeWidth={2.2} />
+                <Area type="monotone" dataKey="errors" name="Errors" stroke="#a53022" fill="transparent" strokeWidth={2} />
+              </AreaChart>
+            )}
           </ResponsiveContainer>
         </ChartCard>
         <ChartCard title="Sessions" meta={`${sessionTotal} total`} empty={statusEmpty} emptyText="Create a session to see the status mix.">
@@ -284,18 +334,32 @@ function DashboardCharts({ charts }: { charts: AdminCharts }) {
         </ChartCard>
       </div>
       <div className="dash-split">
-        <ChartCard title="Today" meta="Requests by hour" empty={hourlyEmpty} emptyText="No requests in the last 24 hours.">
-          <ResponsiveContainer width="100%" height="100%">
-            <BarChart data={charts.hourlyTraffic} margin={{ top: 8, right: 4, left: 0, bottom: 0 }}>
-              <CartesianGrid stroke={LINE} vertical={false} />
-              <XAxis dataKey="hour" tickFormatter={formatHour} interval={3} tick={{ fill: MUTED, fontSize: 11 }} axisLine={{ stroke: LINE }} tickLine={false} />
-              <YAxis allowDecimals={false} width={28} tick={{ fill: MUTED, fontSize: 11 }} axisLine={false} tickLine={false} />
-              <Tooltip cursor={{ fill: 'rgba(38, 37, 30, .04)' }} content={<DashTooltip formatLabel={formatHourLabel} />} />
-              <Bar dataKey="requests" name="Requests" fill={ORANGE} radius={[3, 3, 0, 0]} maxBarSize={18} />
-            </BarChart>
-          </ResponsiveContainer>
+        <ChartCard
+          title={hourlyMode ? 'Signups' : 'New accounts'}
+          meta={hourlyMode ? `Accounts created in the ${RANGE_LABELS[range]}` : `Signups over the ${RANGE_LABELS[range]}`}
+          empty={signupEmpty}
+          emptyText="No new accounts in this range."
+        >
+          {hourlyMode ? (
+            <div className="meter-list">
+              <div className="meter-row">
+                <div className="meter-label"><span>New users</span><strong>{charts.signupsByDay[0]?.users ?? 0}</strong></div>
+                <div className="meter-track"><span style={{ width: charts.signupsByDay[0]?.users ? '100%' : '0%', background: ORANGE }} /></div>
+              </div>
+            </div>
+          ) : (
+            <ResponsiveContainer width="100%" height="100%">
+              <BarChart data={charts.signupsByDay} margin={{ top: 8, right: 4, left: 0, bottom: 0 }}>
+                <CartesianGrid stroke={LINE} vertical={false} />
+                <XAxis dataKey="date" tickFormatter={formatDay} tick={{ fill: MUTED, fontSize: 11 }} axisLine={{ stroke: LINE }} tickLine={false} />
+                <YAxis allowDecimals={false} width={28} tick={{ fill: MUTED, fontSize: 11 }} axisLine={false} tickLine={false} />
+                <Tooltip cursor={{ fill: 'rgba(38, 37, 30, .04)' }} content={<DashTooltip formatLabel={formatDayLabel} />} />
+                <Bar dataKey="users" name="Users" fill={INK} radius={[3, 3, 0, 0]} maxBarSize={18} />
+              </BarChart>
+            </ResponsiveContainer>
+          )}
         </ChartCard>
-        <ChartCard title="Reliability" meta="HTTP responses over 14 days" empty={!bucketTotal} emptyText="No responses recorded yet.">
+        <ChartCard title="Reliability" meta={`HTTP responses over the ${RANGE_LABELS[range]}`} empty={!bucketTotal} emptyText="No responses recorded yet.">
           <div className="meter-list">
             {charts.requestsByStatus.map((entry) => {
               const percent = bucketTotal ? Math.round((entry.count / bucketTotal) * 100) : 0

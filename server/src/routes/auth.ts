@@ -12,7 +12,9 @@ import {
   authCookieOptions,
   clearAuthCookieOptions,
   createAuthToken,
+  publicAccount,
   publicUser,
+  shouldRememberSession,
   type AuthToken,
 } from "../lib/auth";
 import { requestIp, writeLog } from "../lib/logging";
@@ -29,6 +31,14 @@ const loginLimiter = rateLimit({
   standardHeaders: "draft-8",
   legacyHeaders: false,
   message: { error: "Too many login attempts; try again later" },
+});
+
+const profileLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  limit: 20,
+  standardHeaders: "draft-8",
+  legacyHeaders: false,
+  message: { error: "Too many profile updates; try again later" },
 });
 
 const emailSchema = z.string().trim().email().max(190).transform((value) => value.toLocaleLowerCase());
@@ -275,6 +285,70 @@ authRouter.post("/logout", (_req, res) => {
   res.status(204).send();
 });
 
-authRouter.get("/me", requireAuth, (req, res) => {
-  res.json({ user: publicUser(req.user!) });
+authRouter.get("/me", requireAuth, async (req, res) => {
+  const user = await prisma.user.findUnique({
+    where: { id: req.user!.userId },
+    select: {
+      id: true,
+      email: true,
+      name: true,
+      role: true,
+      googleId: true,
+      passwordHash: true,
+      createdAt: true,
+    },
+  });
+  if (!user) throw new HttpError(401, "Invalid or expired session");
+  res.json({ user: publicAccount(user) });
+});
+
+authRouter.patch("/me", requireAuth, profileLimiter, async (req, res) => {
+  const input = z
+    .object({
+      name: z.string().trim().min(1).max(120).optional(),
+      email: emailSchema.optional(),
+      currentPassword: z.string().min(1).max(200).optional(),
+      password: passwordSchema.optional(),
+    })
+    .parse(req.body);
+
+  if (!input.name && !input.email && !input.password) {
+    throw new HttpError(400, "No changes provided");
+  }
+
+  const existing = await prisma.user.findUnique({ where: { id: req.user!.userId } });
+  if (!existing) throw new HttpError(401, "Invalid or expired session");
+  assertAccountActive(existing);
+
+  if (input.email && input.email !== existing.email) {
+    const taken = await prisma.user.findUnique({ where: { email: input.email } });
+    if (taken) throw new HttpError(409, "An account with that email already exists");
+  }
+
+  if (input.password && existing.passwordHash) {
+    if (!input.currentPassword) {
+      throw new HttpError(400, "Current password is required");
+    }
+    if (!(await bcrypt.compare(input.currentPassword, existing.passwordHash))) {
+      throw new HttpError(401, "Current password is incorrect");
+    }
+  }
+
+  const user = await prisma.user.update({
+    where: { id: existing.id },
+    data: {
+      name: input.name,
+      email: input.email,
+      passwordHash: input.password ? await bcrypt.hash(input.password, 12) : undefined,
+    },
+  });
+
+  await writeLog({
+    category: "auth",
+    message: `Updated profile ${user.email}`,
+    userId: user.id,
+    ip: requestIp(req),
+  });
+  setSessionCookie(res, user, shouldRememberSession(req.cookies?.[AUTH_COOKIE]));
+  res.json({ user: publicAccount(user) });
 });

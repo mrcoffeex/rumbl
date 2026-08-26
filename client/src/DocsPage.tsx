@@ -94,6 +94,7 @@ export function DocsPage() {
               <li>Users can create, run, and shuffle their own sessions.</li>
               <li>Admins also get a dashboard, user management, and a list of every group on the platform.</li>
               <li>Password reset is for email accounts only, not Google sign-in.</li>
+              <li>Users and admins can update their name, email, and password from Settings.</li>
               <li>Use Remember me on a trusted device so you stay signed in longer.</li>
             </ul>
           </section>

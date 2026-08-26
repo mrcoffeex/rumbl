@@ -1,6 +1,7 @@
 import type { NextFunction, Request, Response } from "express";
 import { Prisma } from "@prisma/client";
 import { ZodError } from "zod";
+import { DATABASE_UNAVAILABLE_MESSAGE, isDatabaseConnectionError } from "../lib/database";
 import { writeLog } from "../lib/logging";
 
 export class HttpError extends Error {
@@ -23,12 +24,20 @@ export function errorHandler(
   res: Response,
   _next: NextFunction,
 ) {
+  if (res.headersSent) return;
+
   if (error instanceof HttpError) {
     res.status(error.status).json({ error: error.message, details: error.details });
     return;
   }
   if (error instanceof ZodError) {
     res.status(400).json({ error: "Invalid request", details: error.issues });
+    return;
+  }
+  if (isDatabaseConnectionError(error)) {
+    console.error("Database unavailable", error);
+    res.setHeader("Retry-After", "5");
+    res.status(503).json({ error: DATABASE_UNAVAILABLE_MESSAGE });
     return;
   }
   if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") {

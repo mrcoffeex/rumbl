@@ -1,6 +1,6 @@
 import { createContext, useContext, useEffect, useState, type ReactNode } from 'react'
 import { Navigate, Outlet, useLocation } from 'react-router-dom'
-import { api, type User } from './api'
+import { api, type ProfileUpdate, type User } from './api'
 
 interface AuthValue {
   user: User | null
@@ -8,6 +8,7 @@ interface AuthValue {
   login: (email: string, password: string, rememberMe?: boolean) => Promise<void>
   register: (name: string, email: string, password: string, rememberMe?: boolean) => Promise<void>
   googleLogin: (idToken: string, rememberMe?: boolean) => Promise<void>
+  updateProfile: (input: ProfileUpdate) => Promise<User>
   logout: () => Promise<void>
 }
 
@@ -38,6 +39,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     googleLogin: async (idToken, rememberMe) => {
       const result = await api.googleLogin(idToken, rememberMe)
       setUser(result.user)
+    },
+    updateProfile: async (input) => {
+      const result = await api.updateProfile(input)
+      setUser(result.user)
+      return result.user
     },
     logout: async () => {
       await api.logout().finally(() => setUser(null))

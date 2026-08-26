@@ -47,6 +47,16 @@ export interface User {
   email: string
   name: string
   role: 'user' | 'admin'
+  google?: boolean
+  hasPassword?: boolean
+  createdAt?: string
+}
+
+export interface ProfileUpdate {
+  name?: string
+  email?: string
+  currentPassword?: string
+  password?: string
 }
 
 export interface PublicSession {
@@ -69,11 +79,14 @@ export interface AdminOverview {
   admins: number
   sessions: number
   students: number
-  requests24h: number
-  errors24h: number
+  requests: number
+  errors: number
 }
 
+export type DashboardRange = '24h' | '7d' | '14d' | '30d'
+
 export interface AdminCharts {
+  range: DashboardRange
   trafficByDay: Array<{ date: string; requests: number; errors: number }>
   signupsByDay: Array<{ date: string; users: number }>
   hourlyTraffic: Array<{ hour: string; requests: number }>
@@ -227,6 +240,28 @@ function normalizeAdminUser(user: RawAdminUser): AdminUser {
   return { ...user, id: String(user.id), status: user.status || 'active' }
 }
 
+type RawUser = {
+  id: number
+  email: string
+  name: string
+  role: 'user' | 'admin'
+  google?: boolean
+  hasPassword?: boolean
+  createdAt?: string
+}
+
+function normalizeUser(user: RawUser): User {
+  return {
+    id: String(user.id),
+    email: user.email,
+    name: user.name,
+    role: user.role,
+    google: user.google,
+    hasPassword: user.hasPassword,
+    createdAt: user.createdAt,
+  }
+}
+
 async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   const response = await fetch(`/api${path}`, {
     ...options,
@@ -254,25 +289,25 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
 export const api = {
   authConfig: () => request<{ googleClientId: string | null }>('/auth/config'),
   login: async (email: string, password: string, rememberMe = false) => {
-    const { user } = await request<{ user: { id: number; email: string; name: string; role: 'user' | 'admin' } }>('/auth/login', {
+    const { user } = await request<{ user: RawUser }>('/auth/login', {
       method: 'POST',
       body: JSON.stringify({ email, password, rememberMe }),
     })
-    return { user: { id: String(user.id), email: user.email, name: user.name, role: user.role } }
+    return { user: normalizeUser(user) }
   },
   register: async (name: string, email: string, password: string, rememberMe = false) => {
-    const { user } = await request<{ user: { id: number; email: string; name: string; role: 'user' | 'admin' } }>('/auth/register', {
+    const { user } = await request<{ user: RawUser }>('/auth/register', {
       method: 'POST',
       body: JSON.stringify({ name, email, password, rememberMe }),
     })
-    return { user: { id: String(user.id), email: user.email, name: user.name, role: user.role } }
+    return { user: normalizeUser(user) }
   },
   googleLogin: async (idToken: string, rememberMe = false) => {
-    const { user } = await request<{ user: { id: number; email: string; name: string; role: 'user' | 'admin' } }>('/auth/google', {
+    const { user } = await request<{ user: RawUser }>('/auth/google', {
       method: 'POST',
       body: JSON.stringify({ idToken, rememberMe }),
     })
-    return { user: { id: String(user.id), email: user.email, name: user.name, role: user.role } }
+    return { user: normalizeUser(user) }
   },
   forgotPassword: (email: string) => request<{ ok: boolean; resetUrl?: string }>('/auth/forgot-password', {
     method: 'POST',
@@ -284,8 +319,15 @@ export const api = {
   }),
   logout: () => request<void>('/auth/logout', { method: 'POST' }),
   me: async () => {
-    const { user } = await request<{ user: { id: number; email: string; name: string; role: 'user' | 'admin' } }>('/auth/me')
-    return { user: { id: String(user.id), email: user.email, name: user.name, role: user.role } }
+    const { user } = await request<{ user: RawUser }>('/auth/me')
+    return { user: normalizeUser(user) }
+  },
+  updateProfile: async (input: ProfileUpdate) => {
+    const { user } = await request<{ user: RawUser }>('/auth/me', {
+      method: 'PATCH',
+      body: JSON.stringify(input),
+    })
+    return { user: normalizeUser(user) }
   },
   sessions: async () => {
     const { sessions } = await request<{ sessions: RawSession[] }>('/sessions')
@@ -322,7 +364,8 @@ export const api = {
     await request(`/sessions/${sessionId}/students/${studentId}`, { method: 'DELETE' })
     return api.session(sessionId)
   },
-  adminOverview: () => request<{ overview: AdminOverview; charts: AdminCharts }>('/admin/overview'),
+  adminOverview: (range: DashboardRange = '14d') =>
+    request<{ overview: AdminOverview; charts: AdminCharts }>(`/admin/overview?range=${range}`),
   adminTraffic: (limit = 8) => request<{ events: Array<{ id: number; method: string; path: string; status: number; durationMs: number; ip: string | null; createdAt: string; user: { email: string; name: string } | null }> }>(`/admin/traffic?limit=${limit}`),
   adminLogs: (limit = 8) => request<{ logs: Array<{ id: number; level: string; category: string; message: string; meta: unknown; ip: string | null; createdAt: string; user: { email: string; name: string } | null }> }>(`/admin/logs?limit=${limit}`),
   adminSessions: async () => {

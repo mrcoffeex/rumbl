@@ -1,4 +1,5 @@
 import type { NextFunction, Request, Response } from "express";
+import { isDatabaseConnectionError } from "../lib/database";
 import { prisma } from "../lib/prisma";
 import { requestIp } from "../lib/logging";
 
@@ -23,7 +24,13 @@ export function trafficLogger(req: Request, res: Response, next: NextFunction) {
           userId: req.user?.userId,
         },
       })
-      .catch((error) => console.error("Failed to record traffic", error));
+      .catch((error) => {
+        if (isDatabaseConnectionError(error)) {
+          console.error("Database unavailable; skipped traffic log");
+          return;
+        }
+        console.error("Failed to record traffic", error);
+      });
   });
   next();
 }

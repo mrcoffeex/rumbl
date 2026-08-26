@@ -48,3 +48,30 @@ export function publicUser(user: AuthToken | { id: number; email: string; name: 
     role: user.role === "ADMIN" ? "admin" : "user",
   };
 }
+
+export function publicAccount(user: {
+  id: number;
+  email: string;
+  name: string;
+  role: "USER" | "ADMIN";
+  googleId?: string | null;
+  passwordHash?: string | null;
+  createdAt?: Date;
+}) {
+  return {
+    ...publicUser(user),
+    google: Boolean(user.googleId),
+    hasPassword: Boolean(user.passwordHash),
+    createdAt: user.createdAt?.toISOString(),
+  };
+}
+
+export function shouldRememberSession(token?: string) {
+  if (!token) return false;
+  try {
+    const decoded = jwt.decode(token) as { exp?: number } | null;
+    return Boolean(decoded?.exp && decoded.exp * 1000 - Date.now() > SESSION_MS);
+  } catch {
+    return false;
+  }
+}

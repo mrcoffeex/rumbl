@@ -5,6 +5,7 @@ import {
   verifyAuthToken,
   type AuthToken,
 } from "../lib/auth";
+import { isDatabaseConnectionError } from "../lib/database";
 import { prisma } from "../lib/prisma";
 
 declare global {
@@ -53,13 +54,21 @@ export async function requireAuth(req: Request, res: Response, next: NextFunctio
       role: account.role,
     };
     next();
-  } catch {
+  } catch (error) {
+    if (isDatabaseConnectionError(error)) {
+      next(error);
+      return;
+    }
     res.status(401).json({ error: "Invalid or expired session" });
   }
 }
 
 export function requireAdmin(req: Request, res: Response, next: NextFunction) {
-  void requireAuth(req, res, () => {
+  void requireAuth(req, res, (error?: unknown) => {
+    if (error) {
+      next(error);
+      return;
+    }
     if (req.user?.role !== "ADMIN") {
       res.status(403).json({ error: "Administrator access required" });
       return;

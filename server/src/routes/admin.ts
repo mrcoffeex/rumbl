@@ -21,6 +21,8 @@ const roleSchema = z.enum(["user", "admin"]);
 const statusSchema = z.enum(["active", "disabled"]);
 
 const DAY_MS = 24 * 60 * 60 * 1000;
+const overviewRangeSchema = z.enum(["24h", "7d", "14d", "30d"]).default("14d");
+type OverviewRange = z.infer<typeof overviewRangeSchema>;
 
 function dayKey(date: Date) {
   return date.toISOString().slice(0, 10);
@@ -47,6 +49,14 @@ function lastHourKeys(hours: number) {
     const hour = new Date(now.getTime() - (hours - 1 - index) * 60 * 60 * 1000);
     return hour.toISOString();
   });
+}
+
+function rangeWindow(range: OverviewRange) {
+  if (range === "24h") {
+    return { since: new Date(Date.now() - DAY_MS), days: 1, hours: 24 };
+  }
+  const days = range === "7d" ? 7 : range === "30d" ? 30 : 14;
+  return { since: new Date(Date.now() - days * DAY_MS), days, hours: 0 };
 }
 
 function publicAdminUser(user: {
@@ -95,16 +105,16 @@ async function activeAdminCount(exceptId?: number) {
   });
 }
 
-adminRouter.get("/overview", async (_req, res) => {
-  const since24h = new Date(Date.now() - DAY_MS);
-  const since14d = new Date(Date.now() - 14 * DAY_MS);
+adminRouter.get("/overview", async (req, res) => {
+  const range = overviewRangeSchema.parse(req.query.range);
+  const { since, days, hours } = rangeWindow(range);
   const [
     users,
     admins,
     sessions,
     students,
-    requests24h,
-    errors24h,
+    requests,
+    errors,
     sessionsByStatus,
     traffic,
     signups,
@@ -113,15 +123,15 @@ adminRouter.get("/overview", async (_req, res) => {
     prisma.user.count({ where: { role: UserRole.ADMIN } }),
     prisma.session.count(),
     prisma.student.count(),
-    prisma.trafficEvent.count({ where: { createdAt: { gte: since24h } } }),
-    prisma.systemLog.count({ where: { createdAt: { gte: since24h }, level: "error" } }),
+    prisma.trafficEvent.count({ where: { createdAt: { gte: since } } }),
+    prisma.systemLog.count({ where: { createdAt: { gte: since }, level: "error" } }),
     prisma.session.groupBy({ by: ["status"], _count: { _all: true } }),
     prisma.trafficEvent.findMany({
-      where: { createdAt: { gte: since14d } },
+      where: { createdAt: { gte: since } },
       select: { createdAt: true, status: true },
     }),
     prisma.user.findMany({
-      where: { createdAt: { gte: since14d } },
+      where: { createdAt: { gte: since } },
       select: { createdAt: true },
     }),
   ]);
@@ -139,7 +149,7 @@ adminRouter.get("/overview", async (_req, res) => {
     else if (event.status >= 400 && event.status < 500) statusBuckets["4xx"] += 1;
     else if (event.status >= 500) statusBuckets["5xx"] += 1;
     else statusBuckets.other += 1;
-    if (event.createdAt >= since24h) {
+    if (hours > 0) {
       const hour = hourKey(event.createdAt);
       hourly.set(hour, (hourly.get(hour) ?? 0) + 1);
     }
@@ -156,21 +166,31 @@ adminRouter.get("/overview", async (_req, res) => {
   ) as Partial<Record<SessionStatus, number>>;
 
   res.json({
-    overview: { users, admins, sessions, students, requests24h, errors24h },
+    overview: { users, admins, sessions, students, requests, errors },
     charts: {
-      trafficByDay: lastDayKeys(14).map((date) => ({
-        date,
-        requests: trafficByDay.get(date)?.requests ?? 0,
-        errors: trafficByDay.get(date)?.errors ?? 0,
-      })),
-      signupsByDay: lastDayKeys(14).map((date) => ({
-        date,
-        users: signupsByDay.get(date) ?? 0,
-      })),
-      hourlyTraffic: lastHourKeys(24).map((hour) => ({
-        hour,
-        requests: hourly.get(hour) ?? 0,
-      })),
+      range,
+      trafficByDay:
+        range === "24h"
+          ? []
+          : lastDayKeys(days).map((date) => ({
+              date,
+              requests: trafficByDay.get(date)?.requests ?? 0,
+              errors: trafficByDay.get(date)?.errors ?? 0,
+            })),
+      signupsByDay:
+        range === "24h"
+          ? [{ date: dayKey(new Date()), users: signups.length }]
+          : lastDayKeys(days).map((date) => ({
+              date,
+              users: signupsByDay.get(date) ?? 0,
+            })),
+      hourlyTraffic:
+        range === "24h"
+          ? lastHourKeys(hours).map((hour) => ({
+              hour,
+              requests: hourly.get(hour) ?? 0,
+            }))
+          : [],
       sessionsByStatus: (["DRAFT", "OPEN", "CLOSED", "GROUPED"] as SessionStatus[]).map(
         (status) => ({ status: status.toLowerCase(), count: statusCounts[status] ?? 0 }),
       ),

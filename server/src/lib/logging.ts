@@ -1,4 +1,5 @@
 import type { Prisma } from "@prisma/client";
+import { isDatabaseConnectionError } from "./database";
 import { prisma } from "./prisma";
 
 type LogInput = {
@@ -23,6 +24,10 @@ export async function writeLog(input: LogInput) {
       },
     });
   } catch (error) {
+    if (isDatabaseConnectionError(error)) {
+      console.error("Database unavailable; skipped system log");
+      return;
+    }
     console.error("Failed to write system log", error);
   }
 }

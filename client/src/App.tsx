@@ -5,6 +5,7 @@ import { AdminDashboardPage, AdminGroupsPage, UsersPage } from './admin'
 import { LandingPage } from './LandingPage'
 import { DocsPage } from './DocsPage'
 import { PrivacyPage, TermsPage } from './LegalPages'
+import { ProfilePage } from './ProfilePage'
 import {
   DashboardPage, ForgotPasswordPage, JoinPage, LoginPage,
   NewSessionPage, RegisterPage, ResetPasswordPage, ResultsPage, SessionDetailPage,
@@ -28,6 +29,7 @@ export default function App() {
           <Route path="/sessions" element={<DashboardPage />} />
           <Route path="/sessions/new" element={<NewSessionPage />} />
           <Route path="/sessions/:id" element={<SessionDetailPage />} />
+          <Route path="/settings" element={<ProfilePage />} />
         </Route>
       </Route>
       <Route element={<AdminRoute />}>
