@@ -2,6 +2,7 @@ import { Router } from "express";
 import bcrypt from "bcryptjs";
 import { SessionStatus, UserRole, UserStatus } from "@prisma/client";
 import { z } from "zod";
+import { adminCache, invalidateAuthUser } from "../lib/cache";
 import { prisma } from "../lib/prisma";
 import { requestIp, writeLog } from "../lib/logging";
 import { requireAdmin } from "../middleware/auth";
@@ -107,100 +108,104 @@ async function activeAdminCount(exceptId?: number) {
 
 adminRouter.get("/overview", async (req, res) => {
   const range = overviewRangeSchema.parse(req.query.range);
-  const { since, days, hours } = rangeWindow(range);
-  const [
-    users,
-    admins,
-    sessions,
-    students,
-    requests,
-    errors,
-    sessionsByStatus,
-    traffic,
-    signups,
-  ] = await Promise.all([
-    prisma.user.count(),
-    prisma.user.count({ where: { role: UserRole.ADMIN } }),
-    prisma.session.count(),
-    prisma.student.count(),
-    prisma.trafficEvent.count({ where: { createdAt: { gte: since } } }),
-    prisma.systemLog.count({ where: { createdAt: { gte: since }, level: "error" } }),
-    prisma.session.groupBy({ by: ["status"], _count: { _all: true } }),
-    prisma.trafficEvent.findMany({
-      where: { createdAt: { gte: since } },
-      select: { createdAt: true, status: true },
-    }),
-    prisma.user.findMany({
-      where: { createdAt: { gte: since } },
-      select: { createdAt: true },
-    }),
-  ]);
+  const payload = await adminCache.getOrSet(`admin:overview:${range}`, async () => {
+    const { since, days, hours } = rangeWindow(range);
+    const [
+      users,
+      admins,
+      sessions,
+      students,
+      requests,
+      errors,
+      sessionsByStatus,
+      traffic,
+      signups,
+    ] = await Promise.all([
+      prisma.user.count(),
+      prisma.user.count({ where: { role: UserRole.ADMIN } }),
+      prisma.session.count(),
+      prisma.student.count(),
+      prisma.trafficEvent.count({ where: { createdAt: { gte: since } } }),
+      prisma.systemLog.count({ where: { createdAt: { gte: since }, level: "error" } }),
+      prisma.session.groupBy({ by: ["status"], _count: { _all: true } }),
+      prisma.trafficEvent.findMany({
+        where: { createdAt: { gte: since } },
+        select: { createdAt: true, status: true },
+      }),
+      prisma.user.findMany({
+        where: { createdAt: { gte: since } },
+        select: { createdAt: true },
+      }),
+    ]);
 
-  const trafficByDay = new Map<string, { requests: number; errors: number }>();
-  const statusBuckets = { "2xx": 0, "4xx": 0, "5xx": 0, other: 0 };
-  const hourly = new Map<string, number>();
-  for (const event of traffic) {
-    const day = dayKey(event.createdAt);
-    const current = trafficByDay.get(day) ?? { requests: 0, errors: 0 };
-    current.requests += 1;
-    if (event.status >= 500) current.errors += 1;
-    trafficByDay.set(day, current);
-    if (event.status >= 200 && event.status < 300) statusBuckets["2xx"] += 1;
-    else if (event.status >= 400 && event.status < 500) statusBuckets["4xx"] += 1;
-    else if (event.status >= 500) statusBuckets["5xx"] += 1;
-    else statusBuckets.other += 1;
-    if (hours > 0) {
-      const hour = hourKey(event.createdAt);
-      hourly.set(hour, (hourly.get(hour) ?? 0) + 1);
+    const trafficByDay = new Map<string, { requests: number; errors: number }>();
+    const statusBuckets = { "2xx": 0, "4xx": 0, "5xx": 0, other: 0 };
+    const hourly = new Map<string, number>();
+    for (const event of traffic) {
+      const day = dayKey(event.createdAt);
+      const current = trafficByDay.get(day) ?? { requests: 0, errors: 0 };
+      current.requests += 1;
+      if (event.status >= 500) current.errors += 1;
+      trafficByDay.set(day, current);
+      if (event.status >= 200 && event.status < 300) statusBuckets["2xx"] += 1;
+      else if (event.status >= 400 && event.status < 500) statusBuckets["4xx"] += 1;
+      else if (event.status >= 500) statusBuckets["5xx"] += 1;
+      else statusBuckets.other += 1;
+      if (hours > 0) {
+        const hour = hourKey(event.createdAt);
+        hourly.set(hour, (hourly.get(hour) ?? 0) + 1);
+      }
     }
-  }
 
-  const signupsByDay = new Map<string, number>();
-  for (const user of signups) {
-    const day = dayKey(user.createdAt);
-    signupsByDay.set(day, (signupsByDay.get(day) ?? 0) + 1);
-  }
+    const signupsByDay = new Map<string, number>();
+    for (const user of signups) {
+      const day = dayKey(user.createdAt);
+      signupsByDay.set(day, (signupsByDay.get(day) ?? 0) + 1);
+    }
 
-  const statusCounts = Object.fromEntries(
-    sessionsByStatus.map((row) => [row.status, row._count._all]),
-  ) as Partial<Record<SessionStatus, number>>;
+    const statusCounts = Object.fromEntries(
+      sessionsByStatus.map((row) => [row.status, row._count._all]),
+    ) as Partial<Record<SessionStatus, number>>;
 
-  res.json({
-    overview: { users, admins, sessions, students, requests, errors },
-    charts: {
-      range,
-      trafficByDay:
-        range === "24h"
-          ? []
-          : lastDayKeys(days).map((date) => ({
-              date,
-              requests: trafficByDay.get(date)?.requests ?? 0,
-              errors: trafficByDay.get(date)?.errors ?? 0,
-            })),
-      signupsByDay:
-        range === "24h"
-          ? [{ date: dayKey(new Date()), users: signups.length }]
-          : lastDayKeys(days).map((date) => ({
-              date,
-              users: signupsByDay.get(date) ?? 0,
-            })),
-      hourlyTraffic:
-        range === "24h"
-          ? lastHourKeys(hours).map((hour) => ({
-              hour,
-              requests: hourly.get(hour) ?? 0,
-            }))
-          : [],
-      sessionsByStatus: (["DRAFT", "OPEN", "CLOSED", "GROUPED"] as SessionStatus[]).map(
-        (status) => ({ status: status.toLowerCase(), count: statusCounts[status] ?? 0 }),
-      ),
-      requestsByStatus: [
-        { bucket: "2xx", count: statusBuckets["2xx"] },
-        { bucket: "4xx", count: statusBuckets["4xx"] },
-        { bucket: "5xx", count: statusBuckets["5xx"] },
-      ],
-    },
+    return {
+      overview: { users, admins, sessions, students, requests, errors },
+      charts: {
+        range,
+        trafficByDay:
+          range === "24h"
+            ? []
+            : lastDayKeys(days).map((date) => ({
+                date,
+                requests: trafficByDay.get(date)?.requests ?? 0,
+                errors: trafficByDay.get(date)?.errors ?? 0,
+              })),
+        signupsByDay:
+          range === "24h"
+            ? [{ date: dayKey(new Date()), users: signups.length }]
+            : lastDayKeys(days).map((date) => ({
+                date,
+                users: signupsByDay.get(date) ?? 0,
+              })),
+        hourlyTraffic:
+          range === "24h"
+            ? lastHourKeys(hours).map((hour) => ({
+                hour,
+                requests: hourly.get(hour) ?? 0,
+              }))
+            : [],
+        sessionsByStatus: (["DRAFT", "OPEN", "CLOSED", "GROUPED"] as SessionStatus[]).map(
+          (status) => ({ status: status.toLowerCase(), count: statusCounts[status] ?? 0 }),
+        ),
+        requestsByStatus: [
+          { bucket: "2xx", count: statusBuckets["2xx"] },
+          { bucket: "4xx", count: statusBuckets["4xx"] },
+          { bucket: "5xx", count: statusBuckets["5xx"] },
+        ],
+      },
+    };
   });
+  res.setHeader("Cache-Control", "private, max-age=5");
+  res.json(payload);
 });
 
 adminRouter.get("/traffic", async (req, res) => {
@@ -272,6 +277,7 @@ adminRouter.post("/users", async (req, res) => {
     userId: req.user?.userId,
     ip: requestIp(req),
   });
+  adminCache.clear();
   res.status(201).json({ user: publicAdminUser(user) });
 });
 
@@ -328,6 +334,7 @@ adminRouter.patch("/users/:id", async (req, res) => {
     userId: req.user?.userId,
     ip: requestIp(req),
   });
+  invalidateAuthUser(user.id);
   res.json({ user: publicAdminUser(user) });
 });
 
@@ -345,6 +352,7 @@ adminRouter.delete("/users/:id", async (req, res) => {
   }
 
   await prisma.user.delete({ where: { id } });
+  invalidateAuthUser(id);
   await writeLog({
     category: "admin",
     message: `Deleted user ${existing.email}`,

@@ -40,6 +40,9 @@ model User {
   passwordResets PasswordReset[]
   logs           SystemLog[]
   traffic        TrafficEvent[]
+
+  @@index([createdAt(sort: Desc)])
+  @@index([role, status])
 }
 
 model PasswordReset {
@@ -67,6 +70,7 @@ model SystemLog {
 
   @@index([createdAt])
   @@index([category, createdAt])
+  @@index([level, createdAt])
 }
 
 model TrafficEvent {
@@ -97,7 +101,9 @@ model Session {
   students             Student[]
   groups               GeneratedGroup[]
 
-  @@index([ownerId])
+  @@index([ownerId, createdAt(sort: Desc)])
+  @@index([createdAt(sort: Desc)])
+  @@index([status])
 }
 
 model RoleDefinition {
@@ -127,6 +133,8 @@ model Student {
 
   @@unique([sessionId, name])
   @@index([sessionId, roleId])
+  @@index([sessionId, createdAt])
+  @@index([roleId])
 }
 
 model GeneratedGroup {

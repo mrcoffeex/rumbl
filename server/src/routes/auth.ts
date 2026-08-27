@@ -5,6 +5,7 @@ import rateLimit from "express-rate-limit";
 import bcrypt from "bcryptjs";
 import { UserStatus } from "@prisma/client";
 import { z } from "zod";
+import { invalidateAuthUser, readCache } from "../lib/cache";
 import { prisma } from "../lib/prisma";
 import { env } from "../lib/env";
 import {
@@ -65,7 +66,14 @@ function setSessionCookie(
 }
 
 authRouter.get("/config", (_req, res) => {
-  res.json({ googleClientId: env.GOOGLE_CLIENT_ID || null });
+  const config = readCache.get<{ googleClientId: string | null }>("auth:config")
+    ?? readCache.set(
+      "auth:config",
+      { googleClientId: env.GOOGLE_CLIENT_ID || null },
+      60_000,
+    );
+  res.setHeader("Cache-Control", "public, max-age=60");
+  res.json(config);
 });
 
 authRouter.post("/register", loginLimiter, async (req, res) => {
@@ -349,6 +357,7 @@ authRouter.patch("/me", requireAuth, profileLimiter, async (req, res) => {
     userId: user.id,
     ip: requestIp(req),
   });
+  invalidateAuthUser(user.id);
   setSessionCookie(res, user, shouldRememberSession(req.cookies?.[AUTH_COOKIE]));
   res.json({ user: publicAccount(user) });
 });

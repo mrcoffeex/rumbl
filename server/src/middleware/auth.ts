@@ -5,6 +5,7 @@ import {
   verifyAuthToken,
   type AuthToken,
 } from "../lib/auth";
+import { authUserCache } from "../lib/cache";
 import { isDatabaseConnectionError } from "../lib/database";
 import { prisma } from "../lib/prisma";
 
@@ -30,6 +31,22 @@ export function optionalAuth(req: Request, _res: Response, next: NextFunction) {
   next();
 }
 
+type CachedAccount = {
+  email: string;
+  name: string;
+  role: AuthToken["role"];
+  status: UserStatus;
+};
+
+async function loadActiveAccount(userId: number): Promise<CachedAccount | null> {
+  return authUserCache.getOrSet(`auth:user:${userId}`, () =>
+    prisma.user.findUnique({
+      where: { id: userId },
+      select: { email: true, name: true, role: true, status: true },
+    }),
+  );
+}
+
 export async function requireAuth(req: Request, res: Response, next: NextFunction) {
   const token = req.cookies?.[AUTH_COOKIE];
   if (!token) {
@@ -39,10 +56,7 @@ export async function requireAuth(req: Request, res: Response, next: NextFunctio
 
   try {
     const payload = verifyAuthToken(token);
-    const account = await prisma.user.findUnique({
-      where: { id: payload.userId },
-      select: { email: true, name: true, role: true, status: true },
-    });
+    const account = await loadActiveAccount(payload.userId);
     if (!account || account.status === UserStatus.DISABLED) {
       res.status(403).json({ error: "This account has been disabled. Contact an administrator." });
       return;

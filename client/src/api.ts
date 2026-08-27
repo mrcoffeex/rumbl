@@ -263,27 +263,97 @@ function normalizeUser(user: RawUser): User {
 }
 
 async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
-  const response = await fetch(`/api${path}`, {
-    ...options,
-    credentials: 'include',
-    headers: {
-      ...(options.body ? { 'Content-Type': 'application/json' } : {}),
-      ...options.headers,
-    },
-  })
+  const method = (options.method || 'GET').toUpperCase()
+  const cacheable = method === 'GET' && isClientCacheable(path)
+  const key = `${method}:${path}`
 
-  if (!response.ok) {
-    const body = await response.json().catch(() => null)
-    const retryAfter = Number(response.headers.get('Retry-After'))
-    throw new ApiError(
-      body?.message || body?.error || 'Something went wrong.',
-      response.status,
-      Number.isFinite(retryAfter) && retryAfter > 0 ? Math.ceil(retryAfter) : undefined,
-    )
+  if (cacheable) {
+    const cached = clientReadCache.get(key)
+    if (cached && cached.expiresAt > Date.now()) {
+      return cached.value as T
+    }
+    const inflight = clientInflight.get(key)
+    if (inflight) return inflight as Promise<T>
   }
 
-  if (response.status === 204) return undefined as T
-  return response.json() as Promise<T>
+  const run = (async () => {
+    const response = await fetch(`/api${path}`, {
+      ...options,
+      credentials: 'include',
+      headers: {
+        ...(options.body ? { 'Content-Type': 'application/json' } : {}),
+        ...options.headers,
+      },
+    })
+
+    if (!response.ok) {
+      const body = await response.json().catch(() => null)
+      const retryAfter = Number(response.headers.get('Retry-After'))
+      throw new ApiError(
+        body?.message || body?.error || 'Something went wrong.',
+        response.status,
+        Number.isFinite(retryAfter) && retryAfter > 0 ? Math.ceil(retryAfter) : undefined,
+      )
+    }
+
+    if (response.status === 204) return undefined as T
+    return response.json() as Promise<T>
+  })()
+
+  if (cacheable) {
+    clientInflight.set(key, run)
+    try {
+      const value = await run
+      clientReadCache.set(key, { value, expiresAt: Date.now() + clientCacheTtlMs(path) })
+      return value
+    } finally {
+      clientInflight.delete(key)
+    }
+  }
+
+  const value = await run
+  if (method !== 'GET') invalidateClientCaches(path)
+  return value
+}
+
+function isClientCacheable(path: string) {
+  return (
+    path === '/auth/config'
+    || path.startsWith('/public/sessions/')
+    || /^\/sessions\/\d+(\/results)?$/.test(path)
+    || path === '/sessions'
+    || path.startsWith('/admin/overview')
+  )
+}
+
+function clientCacheTtlMs(path: string) {
+  if (path === '/auth/config') return 60_000
+  if (path.includes('/results') && path.startsWith('/public/')) return 2_000
+  if (path.startsWith('/admin/overview')) return 5_000
+  return 1_000
+}
+
+function invalidateClientCaches(path: string) {
+  if (path.startsWith('/public/sessions/') || path.startsWith('/sessions')) {
+    for (const key of [...clientReadCache.keys()]) {
+      if (key.includes('/sessions') || key.includes('/public/sessions')) {
+        clientReadCache.delete(key)
+      }
+    }
+    return
+  }
+  if (path.startsWith('/admin/') || path.startsWith('/auth/')) {
+    clientReadCache.clear()
+  }
+}
+
+const clientReadCache = new Map<string, { value: unknown; expiresAt: number }>()
+const clientInflight = new Map<string, Promise<unknown>>()
+
+/** Test helper — drop short-lived GET responses between cases. */
+export function clearClientReadCache() {
+  clientReadCache.clear()
+  clientInflight.clear()
 }
 
 export const api = {
