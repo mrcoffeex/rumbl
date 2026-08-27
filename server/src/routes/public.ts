@@ -3,6 +3,7 @@ import rateLimit from "express-rate-limit";
 import { randomUUID } from "node:crypto";
 import { Prisma, SessionStatus } from "@prisma/client";
 import { z } from "zod";
+import { invalidateSessionCaches, readCache, sessionCacheKeys } from "../lib/cache";
 import { prisma } from "../lib/prisma";
 import { env } from "../lib/env";
 import { calculateCapacity } from "../lib/grouping";
@@ -12,6 +13,9 @@ export const publicRouter = Router();
 
 const DEVICE_COOKIE = "rumbl_device";
 const deviceId = z.string().uuid();
+const PUBLIC_SESSION_TTL_MS = 1_500;
+const PUBLIC_RESULTS_OPEN_TTL_MS = 1_500;
+const PUBLIC_RESULTS_GROUPED_TTL_MS = 5_000;
 
 publicRouter.use((req, res, next) => {
   let id = req.cookies[DEVICE_COOKIE];
@@ -40,8 +44,27 @@ const enrollLimiter = rateLimit({
 
 const tokenParam = z.string().min(16).max(64);
 
-publicRouter.get("/sessions/:token", async (req, res) => {
-  const token = tokenParam.parse(req.params.token);
+type PublicSessionPayload = {
+  id: number;
+  title: string;
+  status: SessionStatus;
+  expectedStudentCount: number | null;
+  registeredCount: number;
+  roles: Array<{
+    id: number;
+    name: string;
+    slotsPerGroup: number;
+    capacity: number | null;
+    registeredCount: number;
+  }>;
+};
+
+type PublicResultsPayload = {
+  session: { id: number; title: string; status: SessionStatus };
+  groups: unknown[];
+};
+
+async function loadPublicSession(token: string): Promise<PublicSessionPayload> {
   const session = await prisma.session.findUnique({
     where: { publicToken: token },
     include: {
@@ -55,22 +78,66 @@ publicRouter.get("/sessions/:token", async (req, res) => {
   if (!session) throw new HttpError(404, "Session not found");
 
   const capacity = calculateCapacity(session.expectedStudentCount, session.roles);
-  res.json({
+  return {
+    id: session.id,
+    title: session.title,
+    status: session.status,
+    expectedStudentCount: session.expectedStudentCount,
+    registeredCount: session._count.students,
+    roles: session.roles.map((role) => ({
+      id: role.id,
+      name: role.name,
+      slotsPerGroup: role.slotsPerGroup,
+      capacity: capacity.roles.find((item) => item.id === role.id)!.capacity,
+      registeredCount: role._count.students,
+    })),
+  };
+}
+
+async function loadPublicResults(token: string): Promise<PublicResultsPayload> {
+  const session = await prisma.session.findUnique({
+    where: { publicToken: token },
+    select: { id: true, title: true, status: true },
+  });
+  if (!session) throw new HttpError(404, "Session not found");
+
+  const groups =
+    session.status === SessionStatus.GROUPED
+      ? await prisma.generatedGroup.findMany({
+          where: { sessionId: session.id },
+          orderBy: { position: "asc" },
+          select: {
+            id: true,
+            name: true,
+            position: true,
+            members: {
+              orderBy: { id: "asc" },
+              select: {
+                student: { select: { id: true, name: true } },
+                role: { select: { id: true, name: true } },
+              },
+            },
+          },
+        })
+      : [];
+
+  return {
     session: {
       id: session.id,
       title: session.title,
       status: session.status,
-      expectedStudentCount: session.expectedStudentCount,
-      registeredCount: session._count.students,
-      roles: session.roles.map((role) => ({
-        id: role.id,
-        name: role.name,
-        slotsPerGroup: role.slotsPerGroup,
-        capacity: capacity.roles.find((item) => item.id === role.id)!.capacity,
-        registeredCount: role._count.students,
-      })),
     },
-  });
+    groups,
+  };
+}
+
+publicRouter.get("/sessions/:token", async (req, res) => {
+  const token = tokenParam.parse(req.params.token);
+  const cacheKey = sessionCacheKeys(0, token).publicSession!;
+  const session = await readCache.getOrSet(cacheKey, () => loadPublicSession(token), PUBLIC_SESSION_TTL_MS);
+  // Join pages poll every 2s; short private cache cuts duplicate round-trips.
+  res.setHeader("Cache-Control", "private, max-age=1");
+  res.json({ session });
 });
 
 publicRouter.post("/sessions/:token/enroll", enrollLimiter, async (req, res) => {
@@ -130,45 +197,31 @@ publicRouter.post("/sessions/:token/enroll", enrollLimiter, async (req, res) => 
     ),
   );
 
+  invalidateSessionCaches(student.sessionId, token);
   res.status(201).json({ student });
 });
 
 publicRouter.get("/sessions/:token/results", async (req, res) => {
   const token = tokenParam.parse(req.params.token);
-  const session = await prisma.session.findUnique({
-    where: { publicToken: token },
-    select: { id: true, title: true, status: true },
-  });
-  if (!session) throw new HttpError(404, "Session not found");
+  const cacheKey = sessionCacheKeys(0, token).publicResults!;
+  let payload = readCache.get<PublicResultsPayload>(cacheKey);
+  if (!payload) {
+    payload = await loadPublicResults(token);
+    // Grouped results only change on reshuffle (invalidated there).
+    const ttl =
+      payload.session.status === SessionStatus.GROUPED
+        ? PUBLIC_RESULTS_GROUPED_TTL_MS
+        : PUBLIC_RESULTS_OPEN_TTL_MS;
+    readCache.set(cacheKey, payload, ttl);
+  }
 
-  const groups =
-    session.status === SessionStatus.GROUPED
-      ? await prisma.generatedGroup.findMany({
-          where: { sessionId: session.id },
-          orderBy: { position: "asc" },
-          select: {
-            id: true,
-            name: true,
-            position: true,
-            members: {
-              orderBy: { id: "asc" },
-              select: {
-                student: { select: { id: true, name: true } },
-                role: { select: { id: true, name: true } },
-              },
-            },
-          },
-        })
-      : [];
-
-  res.json({
-    session: {
-      id: session.id,
-      title: session.title,
-      status: session.status,
-    },
-    groups,
-  });
+  res.setHeader(
+    "Cache-Control",
+    payload.session.status === SessionStatus.GROUPED
+      ? "private, max-age=5"
+      : "private, max-age=1",
+  );
+  res.json(payload);
 });
 
 async function withSerializableRetry<T>(operation: () => Promise<T>): Promise<T> {

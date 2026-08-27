@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { Router } from "express";
 import { SessionStatus } from "@prisma/client";
 import { z } from "zod";
+import { invalidateSessionCaches, readCache, sessionCacheKeys } from "../lib/cache";
 import { prisma } from "../lib/prisma";
 import { calculateCapacity, generateGroups } from "../lib/grouping";
 import { requestIp, writeLog } from "../lib/logging";
@@ -73,15 +74,21 @@ function sessionPayload<T extends {
 }
 
 sessionRouter.get("/", async (req, res) => {
-  const sessions = await prisma.session.findMany({
-    where: { ownerId: req.user!.userId },
-    include: {
-      roles: { orderBy: { position: "asc" } },
-      _count: { select: { students: true, groups: true } },
-    },
-    orderBy: { createdAt: "desc" },
+  const ownerId = req.user!.userId;
+  const cacheKey = sessionCacheKeys(0).listOwner(ownerId);
+  const sessions = await readCache.getOrSet(cacheKey, async () => {
+    const rows = await prisma.session.findMany({
+      where: { ownerId },
+      include: {
+        roles: { orderBy: { position: "asc" } },
+        _count: { select: { students: true, groups: true } },
+      },
+      orderBy: { createdAt: "desc" },
+    });
+    return rows.map(sessionPayload);
   });
-  res.json({ sessions: sessions.map(sessionPayload) });
+  res.setHeader("Cache-Control", "private, max-age=1");
+  res.json({ sessions });
 });
 
 sessionRouter.post("/", async (req, res) => {
@@ -98,6 +105,7 @@ sessionRouter.post("/", async (req, res) => {
     },
     include: { roles: { orderBy: { position: "asc" } } },
   });
+  invalidateSessionCaches(session.id, session.publicToken, session.ownerId);
   await writeLog({
     category: "session",
     message: `Session created: ${session.title}`,
@@ -111,22 +119,27 @@ sessionRouter.post("/", async (req, res) => {
 sessionRouter.get("/:id", async (req, res) => {
   const id = z.coerce.number().int().positive().parse(req.params.id);
   await requireVisibleSession(id, req.user!);
-  const session = await prisma.session.findUnique({
-    where: { id },
-    include: {
-      roles: {
-        orderBy: { position: "asc" },
-        include: { _count: { select: { students: true } } },
+  const cacheKey = sessionCacheKeys(id).detail;
+  const session = await readCache.getOrSet(cacheKey, async () => {
+    const row = await prisma.session.findUnique({
+      where: { id },
+      include: {
+        roles: {
+          orderBy: { position: "asc" },
+          include: { _count: { select: { students: true } } },
+        },
+        students: {
+          include: { role: true },
+          orderBy: { createdAt: "asc" },
+        },
+        _count: { select: { groups: true } },
       },
-      students: {
-        include: { role: true },
-        orderBy: { createdAt: "asc" },
-      },
-      _count: { select: { groups: true } },
-    },
+    });
+    if (!row) throw new HttpError(404, "Session not found");
+    return sessionPayload(row);
   });
-  if (!session) throw new HttpError(404, "Session not found");
-  res.json({ session: sessionPayload(session) });
+  res.setHeader("Cache-Control", "private, max-age=1");
+  res.json({ session });
 });
 
 sessionRouter.put("/:id", async (req, res) => {
@@ -157,6 +170,7 @@ sessionRouter.put("/:id", async (req, res) => {
       include: { roles: { orderBy: { position: "asc" } } },
     });
   });
+  invalidateSessionCaches(updated.id, updated.publicToken, updated.ownerId);
   res.json({ session: sessionPayload(updated) });
 });
 
@@ -167,6 +181,7 @@ sessionRouter.delete("/:id", async (req, res) => {
     throw new HttpError(409, "Only draft sessions can be deleted");
   }
   await prisma.session.delete({ where: { id } });
+  invalidateSessionCaches(session.id, session.publicToken, session.ownerId);
   res.status(204).send();
 });
 
@@ -187,6 +202,7 @@ sessionRouter.post("/:id/open", async (req, res) => {
       data: { status: SessionStatus.OPEN },
     });
   });
+  invalidateSessionCaches(session.id, session.publicToken, session.ownerId);
   res.json({ session });
 });
 
@@ -199,12 +215,13 @@ sessionRouter.post("/:id/close", async (req, res) => {
   });
   if (result.count === 0) throw new HttpError(409, "Only an open session can be closed");
   const session = await prisma.session.findUniqueOrThrow({ where: { id } });
+  invalidateSessionCaches(session.id, session.publicToken, session.ownerId);
   res.json({ session });
 });
 
 sessionRouter.delete("/:id/students/:studentId", async (req, res) => {
   const id = z.coerce.number().int().positive().parse(req.params.id);
-  await requireManagedSession(id, req.user!);
+  const session = await requireManagedSession(id, req.user!);
   const studentId = z.coerce.number().int().positive().parse(req.params.studentId);
   await prisma.$transaction(async (tx) => {
     const student = await tx.student.findFirst({
@@ -225,12 +242,13 @@ sessionRouter.delete("/:id/students/:studentId", async (req, res) => {
       });
     }
   });
+  invalidateSessionCaches(session.id, session.publicToken, session.ownerId);
   res.status(204).send();
 });
 
 sessionRouter.post("/:id/shuffle", async (req, res) => {
   const id = z.coerce.number().int().positive().parse(req.params.id);
-  await requireManagedSession(id, req.user!);
+  const managed = await requireManagedSession(id, req.user!);
   await prisma.$transaction(async (tx) => {
     const session = await tx.session.findUnique({
       where: { id },
@@ -277,6 +295,7 @@ sessionRouter.post("/:id/shuffle", async (req, res) => {
     });
   });
 
+  invalidateSessionCaches(managed.id, managed.publicToken, managed.ownerId);
   const groups = await loadResults(id);
   await writeLog({
     category: "session",
@@ -291,9 +310,10 @@ sessionRouter.post("/:id/shuffle", async (req, res) => {
 sessionRouter.get("/:id/results", async (req, res) => {
   const id = z.coerce.number().int().positive().parse(req.params.id);
   await requireVisibleSession(id, req.user!);
-  const session = await prisma.session.findUnique({ where: { id } });
-  if (!session) throw new HttpError(404, "Session not found");
-  res.json({ groups: await loadResults(id) });
+  const cacheKey = sessionCacheKeys(id).results;
+  const groups = await readCache.getOrSet(cacheKey, () => loadResults(id));
+  res.setHeader("Cache-Control", "private, max-age=1");
+  res.json({ groups });
 });
 
 function loadResults(sessionId: number) {
