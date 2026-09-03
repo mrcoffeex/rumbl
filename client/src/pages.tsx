@@ -1,6 +1,5 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from 'react'
+import { lazy, Suspense, useEffect, useMemo, useRef, useState, type FormEvent } from 'react'
 import { Link, useLocation, useNavigate, useParams } from 'react-router-dom'
-import { QRCodeCanvas } from 'qrcode.react'
 import {
   ArrowLeft, ArrowRight, Check, CheckCircle2, Clipboard, Download, ExternalLink, Grid3X3, List,
   LockKeyhole, Plus, RefreshCw, Search, Shuffle, Trash2, UserRound, UsersRound, XCircle,
@@ -8,21 +7,10 @@ import {
 import { api, ApiError, type CreateSessionInput, type PublicResults, type PublicSession, type Registration, type Session } from './api'
 import { useAuth } from './auth'
 import { Brand, ConfirmationModal, EmptyState, ErrorState, GroupsGrid, LoadingState, PageHeading, StatusBadge } from './components'
+import { useRemote } from './useRemote'
 
-export function useRemote<T>(load: () => Promise<T>, dependencies: unknown[]) {
-  const [data, setData] = useState<T | null>(null)
-  const [error, setError] = useState('')
-  const [loading, setLoading] = useState(true)
-  const request = useCallback(() => {
-    setLoading(true)
-    setError('')
-    load().then(setData).catch((cause) => setError(cause instanceof Error ? cause.message : 'Unexpected error'))
-      .finally(() => setLoading(false))
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, dependencies)
-  useEffect(request, [request])
-  return { data, setData, error, loading, retry: request }
-}
+const GoogleSignIn = lazy(() => import('./GoogleSignIn'))
+const QRCodeCanvas = lazy(() => import('qrcode.react').then((mod) => ({ default: mod.QRCodeCanvas })))
 
 export function LoginPage() {
   const { login, googleLogin, user } = useAuth()
@@ -68,7 +56,9 @@ export function LoginPage() {
           <label className="check-row"><input type="checkbox" checked={rememberMe} onChange={(e) => setRememberMe(e.target.checked)} /> Remember me</label>
           <button className="button primary full" disabled={submitting}>{submitting ? 'Signing in…' : <>Sign in <ArrowRight size={17} /></>}</button>
         </form>
-        <GoogleSignIn rememberMe={rememberMe} onToken={(token) => googleLogin(token, rememberMe).then(() => navigate(destination, { replace: true })).catch((cause) => setError(cause instanceof Error ? cause.message : 'Google sign-in failed.'))} onError={setError} />
+        <Suspense fallback={<p className="auth-note">Checking Google sign-in…</p>}>
+          <GoogleSignIn rememberMe={rememberMe} onToken={(token) => googleLogin(token, rememberMe).then(() => navigate(destination, { replace: true })).catch((cause) => setError(cause instanceof Error ? cause.message : 'Google sign-in failed.'))} onError={setError} />
+        </Suspense>
         <p className="auth-links"><Link to="/forgot-password">Forgot password?</Link><Link to="/register">Create an account</Link></p>
       </section>
     </main>
@@ -118,7 +108,9 @@ export function RegisterPage() {
           <label className="check-row"><input type="checkbox" checked={rememberMe} onChange={(e) => setRememberMe(e.target.checked)} /> Remember me</label>
           <button className="button primary full" disabled={submitting}>{submitting ? 'Creating…' : <>Create account <ArrowRight size={17} /></>}</button>
         </form>
-        <GoogleSignIn rememberMe={rememberMe} onToken={(token) => googleLogin(token, rememberMe).then(() => navigate('/sessions', { replace: true })).catch((cause) => setError(cause instanceof Error ? cause.message : 'Google sign-in failed.'))} onError={setError} />
+        <Suspense fallback={<p className="auth-note">Checking Google sign-in…</p>}>
+          <GoogleSignIn rememberMe={rememberMe} onToken={(token) => googleLogin(token, rememberMe).then(() => navigate('/sessions', { replace: true })).catch((cause) => setError(cause instanceof Error ? cause.message : 'Google sign-in failed.'))} onError={setError} />
+        </Suspense>
         <p className="legal-agree">By continuing you agree to the <Link className="text-link" to="/terms">Terms & Conditions</Link> and <Link className="text-link" to="/privacy">Privacy Policy</Link>.</p>
         <p className="auth-links"><Link to="/login">Already have an account?</Link></p>
       </section>
@@ -202,104 +194,6 @@ export function ResetPasswordPage() {
       </section>
     </main>
   )
-}
-
-function GoogleSignIn({ onToken }: { rememberMe?: boolean; onToken: (token: string) => void; onError: (message: string) => void }) {
-  const [clientId, setClientId] = useState<string | null>(null)
-  const [configState, setConfigState] = useState<'loading' | 'ready' | 'missing' | 'unreachable'>('loading')
-  const [scriptFailed, setScriptFailed] = useState(false)
-  const buttonRef = useRef<HTMLDivElement>(null)
-  const onTokenRef = useRef(onToken)
-  onTokenRef.current = onToken
-
-  useEffect(() => {
-    void api.authConfig()
-      .then((config) => {
-        if (config.googleClientId) {
-          setClientId(config.googleClientId)
-          setConfigState('ready')
-        } else {
-          setConfigState('missing')
-        }
-      })
-      .catch(() => setConfigState('unreachable'))
-  }, [])
-
-  useEffect(() => {
-    if (!clientId) return
-    const scriptId = 'google-gsi-client'
-    let cancelled = false
-    let script = document.getElementById(scriptId) as HTMLScriptElement | null
-
-    const prepare = () => {
-      if (cancelled || !buttonRef.current || !window.google) return
-      buttonRef.current.replaceChildren()
-      window.google.accounts.id.initialize({
-        client_id: clientId,
-        callback: (response: { credential: string }) => onTokenRef.current(response.credential),
-        ux_mode: 'popup',
-      })
-      const width = Math.max(240, Math.min(buttonRef.current.clientWidth || 320, 400))
-      window.google.accounts.id.renderButton(buttonRef.current, {
-        theme: 'outline',
-        size: 'large',
-        width,
-        text: 'continue_with',
-      })
-    }
-
-    if (!script) {
-      script = document.createElement('script')
-      script.id = scriptId
-      script.src = 'https://accounts.google.com/gsi/client'
-      script.async = true
-      document.head.appendChild(script)
-    }
-
-    if (window.google) prepare()
-    else script.addEventListener('load', prepare)
-
-    const timeout = window.setTimeout(() => {
-      if (!cancelled && !window.google) setScriptFailed(true)
-    }, 8000)
-
-    return () => {
-      cancelled = true
-      window.clearTimeout(timeout)
-      script?.removeEventListener('load', prepare)
-    }
-  }, [clientId])
-
-  return (
-    <div className="google-wrap">
-      <div className="auth-divider">or</div>
-      {configState === 'loading' && <p className="auth-note">Checking Google sign-in…</p>}
-      {configState === 'missing' && (
-        <p className="auth-note">Google sign-in is not configured on the server. Restart npm run dev after saving GOOGLE_CLIENT_ID in server/.env.</p>
-      )}
-      {configState === 'unreachable' && (
-        <p className="auth-note">Cannot reach the API, so Google sign-in is unavailable. Confirm the server is running on port 4000.</p>
-      )}
-      {configState === 'ready' && <div ref={buttonRef} className="google-official" />}
-      {configState === 'ready' && scriptFailed && (
-        <p className="auth-note">Google’s sign-in script did not load. Check that accounts.google.com is reachable.</p>
-      )}
-    </div>
-  )
-}
-
-declare global {
-  interface Window {
-    google?: {
-      accounts: {
-        id: {
-          initialize: (config: { client_id: string; callback: (response: { credential: string }) => void; ux_mode?: string }) => void
-          prompt: (callback?: (notification: { isNotDisplayed: () => boolean; isSkippedMoment: () => boolean }) => void) => void
-          renderButton: (parent: HTMLElement, options: Record<string, unknown>) => void
-        }
-      }
-    }
-  }
 }
 
 export function DashboardPage() {
@@ -678,8 +572,12 @@ export function SessionDetailPage() {
           <div><p className="eyebrow">Enrollment link</p><h2>Invite participants</h2><p>Share this link or QR code. Participants can join from any phone.</p>
             <div className="copy-field"><span>{joinUrl}</span><button onClick={() => void copyLink(joinUrl, 'join')} aria-label="Copy enrollment link">{copied === 'join' ? <Check size={17} /> : <Clipboard size={17} />}{copied === 'join' ? 'Copied' : 'Copy'}</button></div>
           </div>
-          <div className="qr-wrap" ref={qrRef}><QRCodeCanvas value={joinUrl} size={116} bgColor="#ffffff" fgColor="#26251e" marginSize={1} />
-            <button className="text-button" onClick={downloadQr}><Download size={15} />Download QR</button></div>
+          <div className="qr-wrap" ref={qrRef}>
+            <Suspense fallback={<span className="spinner" aria-hidden="true" />}>
+              <QRCodeCanvas value={joinUrl} size={116} bgColor="#ffffff" fgColor="#26251e" marginSize={1} />
+            </Suspense>
+            <button className="text-button" onClick={downloadQr}><Download size={15} />Download QR</button>
+          </div>
         </section>
         <section className="card capacity-card" aria-live="polite">
           <div className="section-heading"><div><p className="eyebrow">{limited ? 'Capacity' : 'Registered'}</p><h2>{limited ? `${registered} of ${expected}` : `${registered} joined`}</h2></div><span className="large-percent">{limited ? `${percent}%` : 'No limit'}</span></div>

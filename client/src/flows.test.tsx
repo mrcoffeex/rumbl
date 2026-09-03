@@ -35,11 +35,11 @@ describe('critical user flows', () => {
     }))
 
     render(
-      <AuthProvider>
-        <MemoryRouter>
+      <MemoryRouter>
+        <AuthProvider>
           <LandingPage />
-        </MemoryRouter>
-      </AuthProvider>,
+        </AuthProvider>
+      </MemoryRouter>,
     )
 
     expect(await screen.findByRole('heading', { name: /fair teams in a few taps/i })).toBeTruthy()
@@ -47,6 +47,51 @@ describe('critical user flows', () => {
     expect(screen.getByRole('button', { name: /shuffle into groups/i })).toBeTruthy()
     expect(screen.getByRole('link', { name: /terms & conditions/i })).toBeTruthy()
     expect(screen.getByRole('link', { name: /privacy policy/i })).toBeTruthy()
+  })
+
+  it('shows signed-out landing CTAs before auth resolves, then workspace when signed in', async () => {
+    let resolveMe!: (value: Response) => void
+    const pendingMe = new Promise<Response>((resolve) => {
+      resolveMe = resolve
+    })
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+      if (String(input).endsWith('/api/auth/me')) return pendingMe
+      return json({ error: 'Unexpected request' }, 500)
+    }))
+
+    render(
+      <MemoryRouter>
+        <AuthProvider>
+          <LandingPage />
+        </AuthProvider>
+      </MemoryRouter>,
+    )
+
+    expect(screen.getAllByRole('link', { name: /get started/i }).length).toBeGreaterThan(0)
+    expect(screen.getByRole('link', { name: /^sign in$/i })).toBeTruthy()
+    expect(screen.queryByRole('link', { name: /open workspace/i })).toBeNull()
+
+    resolveMe(json({ user: { id: 2, email: 'teacher@school.edu', name: 'Teacher', role: 'user' } }))
+    expect((await screen.findAllByRole('link', { name: /open workspace/i })).length).toBeGreaterThan(0)
+    expect(screen.queryAllByRole('link', { name: /get started/i })).toHaveLength(0)
+    expect(screen.getByRole('link', { name: /^workspace$/i })).toBeTruthy()
+  })
+
+  it('does not fetch the current user on public join pages', async () => {
+    const fetchMock = vi.fn(async () => json({ error: 'Unexpected request' }, 500))
+    vi.stubGlobal('fetch', fetchMock)
+
+    render(
+      <MemoryRouter initialEntries={['/join/publictoken123456']}>
+        <AuthProvider>
+          <p>public join shell</p>
+        </AuthProvider>
+      </MemoryRouter>,
+    )
+
+    expect(screen.getByText('public join shell')).toBeTruthy()
+    await Promise.resolve()
+    expect(fetchMock).not.toHaveBeenCalled()
   })
 
   it('publishes terms and a privacy policy', () => {
@@ -77,11 +122,11 @@ describe('critical user flows', () => {
     }))
 
     render(
-      <AuthProvider>
-        <MemoryRouter initialEntries={['/docs']}>
+      <MemoryRouter initialEntries={['/docs']}>
+        <AuthProvider>
           <DocsPage />
-        </MemoryRouter>
-      </AuthProvider>,
+        </AuthProvider>
+      </MemoryRouter>,
     )
 
     expect(await screen.findByRole('heading', { name: /how rumbl puts people into groups/i })).toBeTruthy()
@@ -103,15 +148,15 @@ describe('critical user flows', () => {
     vi.stubGlobal('fetch', fetchMock)
 
     render(
-      <AuthProvider>
-        <MemoryRouter initialEntries={['/login']}>
+      <MemoryRouter initialEntries={['/login']}>
+        <AuthProvider>
           <Routes>
             <Route path="/login" element={<LoginPage />} />
             <Route path="/sessions" element={<h1>Session dashboard</h1>} />
             <Route path="/admin" element={<h1>Session dashboard</h1>} />
           </Routes>
-        </MemoryRouter>
-      </AuthProvider>,
+        </AuthProvider>
+      </MemoryRouter>,
     )
 
     const user = userEvent.setup()
@@ -282,13 +327,13 @@ describe('critical user flows', () => {
     vi.stubGlobal('fetch', fetchMock)
 
     render(
-      <AuthProvider>
-        <MemoryRouter initialEntries={['/sessions/9']}>
+      <MemoryRouter initialEntries={['/sessions/9']}>
+        <AuthProvider>
           <Routes>
             <Route path="/sessions/:id" element={<SessionDetailPage />} />
           </Routes>
-        </MemoryRouter>
-      </AuthProvider>,
+        </AuthProvider>
+      </MemoryRouter>,
     )
 
     const resultsUrl = `${window.location.origin}/results/publictoken123456`
@@ -337,11 +382,11 @@ describe('critical user flows', () => {
 
     const user = userEvent.setup()
     render(
-      <AuthProvider>
-        <MemoryRouter>
+      <MemoryRouter>
+        <AuthProvider>
           <AdminDashboardPage />
-        </MemoryRouter>
-      </AuthProvider>,
+        </AuthProvider>
+      </MemoryRouter>,
     )
 
     expect(await screen.findByRole('heading', { name: 'Dashboard' })).toBeTruthy()
@@ -395,11 +440,11 @@ describe('critical user flows', () => {
     vi.stubGlobal('fetch', fetchMock)
 
     render(
-      <AuthProvider>
-        <MemoryRouter>
+      <MemoryRouter>
+        <AuthProvider>
           <UsersPage />
-        </MemoryRouter>
-      </AuthProvider>,
+        </AuthProvider>
+      </MemoryRouter>,
     )
 
     expect(await screen.findByRole('heading', { name: 'Users' })).toBeTruthy()
@@ -421,11 +466,11 @@ describe('critical user flows', () => {
     vi.stubGlobal('fetch', fetchMock)
 
     render(
-      <AuthProvider>
-        <MemoryRouter>
+      <MemoryRouter>
+        <AuthProvider>
           <UsersPage />
-        </MemoryRouter>
-      </AuthProvider>,
+        </AuthProvider>
+      </MemoryRouter>,
     )
 
     const user = userEvent.setup()
@@ -480,11 +525,11 @@ describe('critical user flows', () => {
     vi.stubGlobal('fetch', fetchMock)
 
     render(
-      <AuthProvider>
-        <MemoryRouter>
+      <MemoryRouter>
+        <AuthProvider>
           <UsersPage />
-        </MemoryRouter>
-      </AuthProvider>,
+        </AuthProvider>
+      </MemoryRouter>,
     )
 
     const user = userEvent.setup()
@@ -530,11 +575,11 @@ describe('critical user flows', () => {
     vi.stubGlobal('fetch', fetchMock)
 
     render(
-      <AuthProvider>
-        <MemoryRouter>
+      <MemoryRouter>
+        <AuthProvider>
           <AdminGroupsPage />
-        </MemoryRouter>
-      </AuthProvider>,
+        </AuthProvider>
+      </MemoryRouter>,
     )
 
     const user = userEvent.setup()
@@ -575,16 +620,16 @@ describe('critical user flows', () => {
     vi.stubGlobal('fetch', fetchMock)
 
     render(
-      <AuthProvider>
-        <MemoryRouter initialEntries={['/sessions']}>
+      <MemoryRouter initialEntries={['/sessions']}>
+        <AuthProvider>
           <Routes>
             <Route element={<AppLayout />}>
               <Route path="/sessions" element={<div>My groups</div>} />
               <Route path="/settings" element={<ProfilePage />} />
             </Route>
           </Routes>
-        </MemoryRouter>
-      </AuthProvider>,
+        </AuthProvider>
+      </MemoryRouter>,
     )
 
     const user = userEvent.setup()
@@ -630,13 +675,13 @@ describe('critical user flows', () => {
     vi.stubGlobal('fetch', fetchMock)
 
     render(
-      <AuthProvider>
-        <MemoryRouter initialEntries={['/settings']}>
+      <MemoryRouter initialEntries={['/settings']}>
+        <AuthProvider>
           <Routes>
             <Route path="/settings" element={<ProfilePage />} />
           </Routes>
-        </MemoryRouter>
-      </AuthProvider>,
+        </AuthProvider>
+      </MemoryRouter>,
     )
 
     const user = userEvent.setup()
