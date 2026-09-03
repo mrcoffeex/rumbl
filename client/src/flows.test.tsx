@@ -91,7 +91,7 @@ describe('critical user flows', () => {
 
     expect(screen.getByText('public join shell')).toBeTruthy()
     await Promise.resolve()
-    expect(fetchMock.mock.calls.some(([input]) => String(input).includes('/api/auth/me'))).toBe(false)
+    expect(fetchMock).not.toHaveBeenCalled()
   })
 
   it('publishes terms and a privacy policy', () => {
