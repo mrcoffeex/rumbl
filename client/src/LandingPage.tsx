@@ -254,7 +254,7 @@ export function LandingPage() {
           <h2>Next class, skip the grouping chaos.</h2>
           <p>Create a session in a minute, share the join page, and shuffle when the roster looks right.</p>
           <div className="landing-hero-actions">
-            <Link className="button primary" to={primary.to}>{primary.label} <ArrowRight size={17} /></Link>}
+            <Link className="button primary" to={primary.to}>{primary.label} <ArrowRight size={17} /></Link>
             {!user && <Link className="button secondary" to="/login">I already have an account</Link>}
           </div>
         </section>

@@ -7,9 +7,13 @@ export default defineConfig({
   build: {
     rollupOptions: {
       output: {
-        manualChunks: {
-          'react-vendor': ['react', 'react-dom', 'react-router-dom'],
-          recharts: ['recharts'],
+        manualChunks(id) {
+          if (id.includes('node_modules/recharts')) return 'recharts'
+          if (
+            id.includes('node_modules/react-dom')
+            || id.includes('node_modules/react-router')
+            || id.includes('node_modules/react/')
+          ) return 'react-vendor'
         },
       },
     },
