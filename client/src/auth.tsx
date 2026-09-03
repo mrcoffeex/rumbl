@@ -1,4 +1,4 @@
-import { createContext, useContext, useEffect, useState, type ReactNode } from 'react'
+import { createContext, useContext, useEffect, useRef, useState, type ReactNode } from 'react'
 import { Navigate, Outlet, useLocation } from 'react-router-dom'
 import { api, type ProfileUpdate, type User } from './api'
 
@@ -14,16 +14,46 @@ interface AuthValue {
 
 const AuthContext = createContext<AuthValue | null>(null)
 
+function isPublicPath(pathname: string) {
+  if (
+    pathname === '/'
+    || pathname === '/docs'
+    || pathname === '/terms'
+    || pathname === '/privacy'
+    || pathname === '/login'
+    || pathname === '/register'
+    || pathname === '/forgot-password'
+    || pathname === '/reset-password'
+  ) return true
+  return pathname.startsWith('/join/') || pathname.startsWith('/results/')
+}
+
+function shouldFetchSession(pathname: string) {
+  if (pathname.startsWith('/join/') || pathname.startsWith('/results/')) return false
+  if (pathname === '/terms' || pathname === '/privacy') return false
+  if (pathname === '/forgot-password' || pathname === '/reset-password') return false
+  return true
+}
+
 export function AuthProvider({ children }: { children: ReactNode }) {
+  const { pathname } = useLocation()
   const [user, setUser] = useState<User | null>(null)
-  const [loading, setLoading] = useState(true)
+  const [resolved, setResolved] = useState(false)
+  const inFlight = useRef(false)
+  const publicRoute = isPublicPath(pathname)
+  const loading = !resolved && !publicRoute
 
   useEffect(() => {
+    if (resolved || inFlight.current || !shouldFetchSession(pathname)) return
+    inFlight.current = true
     api.me()
       .then(({ user: currentUser }) => setUser(currentUser))
       .catch(() => setUser(null))
-      .finally(() => setLoading(false))
-  }, [])
+      .finally(() => {
+        inFlight.current = false
+        setResolved(true)
+      })
+  }, [pathname, resolved])
 
   const value: AuthValue = {
     user,
@@ -31,14 +61,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     login: async (email, password, rememberMe) => {
       const result = await api.login(email, password, rememberMe)
       setUser(result.user)
+      setResolved(true)
     },
     register: async (name, email, password, rememberMe) => {
       const result = await api.register(name, email, password, rememberMe)
       setUser(result.user)
+      setResolved(true)
     },
     googleLogin: async (idToken, rememberMe) => {
       const result = await api.googleLogin(idToken, rememberMe)
       setUser(result.user)
+      setResolved(true)
     },
     updateProfile: async (input) => {
       const result = await api.updateProfile(input)

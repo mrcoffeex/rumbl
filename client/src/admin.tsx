@@ -10,7 +10,7 @@ import {
 import { api, type AdminCharts, type AdminOverview, type AdminUser, type DashboardRange, type SessionStatus } from './api'
 import { useAuth } from './auth'
 import { ConfirmationModal, ErrorState, LoadingState, PageHeading, StatusBadge } from './components'
-import { useRemote } from './pages'
+import { useRemote } from './useRemote'
 
 const INK = '#26251e'
 const ORANGE = '#f54e00'

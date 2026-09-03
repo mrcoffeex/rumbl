@@ -18,7 +18,7 @@ const SECTIONS = [
 ] as const
 
 export function DocsPage() {
-  const { user, loading } = useAuth()
+  const { user } = useAuth()
   const [scrolled, setScrolled] = useState(false)
   const workspace = user?.role === 'admin' ? '/admin' : '/sessions'
   const primary = user
@@ -48,8 +48,8 @@ export function DocsPage() {
         <nav className="landing-nav" aria-label="Documentation">
           <Link to="/">Home</Link>
           <NavLink to="/docs">Docs</NavLink>
-          {!loading && (user ? <Link to={workspace}>Workspace</Link> : <Link to="/login">Sign in</Link>)}
-          {!loading && <Link className="button primary" to={primary.to}>{primary.label} <ArrowRight size={16} /></Link>}
+          {user ? <Link to={workspace}>Workspace</Link> : <Link to="/login">Sign in</Link>}
+          <Link className="button primary" to={primary.to}>{primary.label} <ArrowRight size={16} /></Link>
         </nav>
       </header>
 

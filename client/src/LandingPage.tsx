@@ -104,7 +104,7 @@ function ShuffleDemo() {
 }
 
 export function LandingPage() {
-  const { user, loading } = useAuth()
+  const { user } = useAuth()
   const [scrolled, setScrolled] = useState(false)
   const workspace = user?.role === 'admin' ? '/admin' : '/sessions'
   const primary = user
@@ -127,8 +127,8 @@ export function LandingPage() {
           <Link to="/docs">Docs</Link>
           <a className="landing-hash" href="#how">How it works</a>
           <a className="landing-hash" href="#who">Who it’s for</a>
-          {!loading && (user ? <Link to={workspace}>Workspace</Link> : <Link to="/login">Sign in</Link>)}
-          {!loading && <Link className="button primary" to={primary.to}>{primary.label} <ArrowRight size={16} /></Link>}
+          {user ? <Link to={workspace}>Workspace</Link> : <Link to="/login">Sign in</Link>}
+          <Link className="button primary" to={primary.to}>{primary.label} <ArrowRight size={16} /></Link>
         </nav>
       </header>
 
@@ -141,7 +141,7 @@ export function LandingPage() {
             When the room is ready, Rumbl shuffles them into groups that actually match the mix you planned.
           </p>
           <div className="landing-hero-actions">
-            {!loading && <Link className="button primary" to={primary.to}>{primary.label} <ArrowRight size={17} /></Link>}
+            <Link className="button primary" to={primary.to}>{primary.label} <ArrowRight size={17} /></Link>
             <a className="button secondary" href="#how">See how it works</a>
           </div>
           <ul className="landing-proof">
@@ -254,8 +254,8 @@ export function LandingPage() {
           <h2>Next class, skip the grouping chaos.</h2>
           <p>Create a session in a minute, share the join page, and shuffle when the roster looks right.</p>
           <div className="landing-hero-actions">
-            {!loading && <Link className="button primary" to={primary.to}>{primary.label} <ArrowRight size={17} /></Link>}
-            {!loading && !user && <Link className="button secondary" to="/login">I already have an account</Link>}
+            <Link className="button primary" to={primary.to}>{primary.label} <ArrowRight size={17} /></Link>}
+            {!user && <Link className="button secondary" to="/login">I already have an account</Link>}
           </div>
         </section>
       </main>
