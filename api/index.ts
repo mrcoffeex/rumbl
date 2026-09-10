@@ -19,4 +19,4 @@ export default function handler(req: IncomingMessage, res: ServerResponse) {
   app(req, res);
 }
 
-export const config = { maxDuration: 30 };
+export const config = { maxDuration: 100, runtime: "nodejs" };
