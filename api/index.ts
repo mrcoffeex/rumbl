@@ -19,4 +19,4 @@ export default function handler(req: IncomingMessage, res: ServerResponse) {
   app(req, res);
 }
 
-export const config = { maxDuration: 100, maxDurationUnit: "seconds" };
+export const config = { maxDuration: 50, maxDurationUnit: "seconds" };
