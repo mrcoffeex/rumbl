@@ -5,7 +5,7 @@ description: An AI-first code editor whose marketing site reads like a quietly-c
 
 colors:
   primary: "#663924"
-  primary-active: "#d04200"
+  primary-active: "#695449"
   ink: "#26251e"
   body: "#a58e48"
   body-strong: "#26251e"
