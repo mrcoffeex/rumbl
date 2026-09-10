@@ -4,12 +4,12 @@ name: Cursor-design-analysis
 description: An AI-first code editor whose marketing site reads like a quietly-confident developer-tools brand with a warm-cream editorial canvas (`#f7f7f4`) instead of the typical dark IDE atmosphere. Near-black warm ink (`#26251e`) carries body and display alike — display sits at weight 400 with negative letter-spacing for a magazine feel rather than a bold tech voice. The single brand voltage is **Cursor Orange** (`#f54e00`) reserved for primary CTAs and the wordmark. A signature pastel timeline palette (peach, mint, blue, lavender, gold) marks AI-action stages (Thinking / Reading / Editing / Grepping / Done) — only inside in-product timeline visualizations. Cards use minimal hairlines, no shadows, generous 80px section rhythm. CursorGothic for display/body, JetBrains Mono on every code surface (which is roughly half the page).
 
 colors:
-  primary: "#f54e00"
-  primary-active: "#d04200"
+  primary: "#3924f7"
+  primary-active: "#ec0dc3"
   ink: "#26251e"
   body: "#5a5852"
   body-strong: "#26251e"
-  muted: "#807d72"
+  muted: "#26ad21"
   muted-soft: "#a09c92"
   hairline: "#e6e5e0"
   hairline-soft: "#efeee8"
