@@ -19,4 +19,4 @@ export default function handler(req: IncomingMessage, res: ServerResponse) {
   app(req, res);
 }
 
-export const config = { maxDuration: 30 };
+export const config = { maxDuration: 30, runtime: "edge", regions: ["iad1", "cdg1", "gru1", "sfo1"] };
